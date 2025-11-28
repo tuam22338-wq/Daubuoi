@@ -19,6 +19,10 @@ export default function App() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   
+  // Edit Mode State
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+
   // Settings Visibility
   const [settingsCollapsed, setSettingsCollapsed] = useState(true); 
   
@@ -164,8 +168,8 @@ export default function App() {
   useEffect(() => {
       const saveCurrent = async () => {
           if (currentSessionId && messages.length > 0) {
-              const currentTitle = sessions.find(s => s.id === currentSessionId)?.title || 'Untitled Chat';
-              const newTitle = currentTitle === 'Untitled Chat' && messages[0].role === Role.USER 
+              const currentTitle = sessions.find(s => s.id === currentSessionId)?.title || 'Đoạn chat chưa đặt tên';
+              const newTitle = currentTitle === 'Đoạn chat chưa đặt tên' && messages[0].role === Role.USER 
                                ? (messages[0].text.slice(0, 30) + (messages[0].text.length > 30 ? '...' : '')) 
                                : currentTitle;
               
@@ -198,7 +202,7 @@ export default function App() {
       const newId = Date.now().toString();
       const newSession: ChatSession = {
           id: newId,
-          title: 'Untitled Chat',
+          title: 'Đoạn chat chưa đặt tên',
           messages: [],
           updatedAt: Date.now(),
           totalTokens: 0
@@ -374,7 +378,7 @@ export default function App() {
         prev.map(msg => 
           msg.id === modelMessageId ? { 
               ...msg, 
-              text: "System Error: " + (error as any).message, 
+              text: "Lỗi hệ thống: " + (error as any).message, 
               isError: true 
           } : msg
         )
@@ -396,23 +400,72 @@ export default function App() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
+    // Check if on mobile (rough heuristic) or specifically use checking window width
+    const isMobile = window.innerWidth < 768;
+
+    if (e.key === 'Enter') {
+        if (!e.shiftKey && !isMobile) {
+            // Desktop: Enter sends
+            e.preventDefault();
+            handleSendMessage();
+        } 
+        // Mobile: Enter does default (newline), Shift+Enter (if avail) does newline
     }
+  };
+
+  // --- Edit & Branch Logic ---
+  const handleEditClick = (msg: ChatMessage) => {
+      setEditingMessageId(msg.id);
+      setEditText(msg.text);
+  };
+
+  const handleEditCancel = () => {
+      setEditingMessageId(null);
+      setEditText('');
+  };
+
+  const handleEditSubmit = async (originalMsgId: string) => {
+      if (!editText.trim()) return;
+      
+      const index = messages.findIndex(m => m.id === originalMsgId);
+      if (index === -1) return;
+
+      // Slice messages to remove everything AFTER this message (Branching/Rewind)
+      // but exclude the message being edited itself, because handleSendMessage will re-add it as new
+      const previousMessages = messages.slice(0, index);
+      
+      setMessages(previousMessages);
+      
+      // Need to reset session logic if we are rewinding, strictly speaking, 
+      // geminiService might maintain internal history, so it's safer to re-init session
+      // But handleSendMessage builds prompt from input. 
+      // If we want to maintain chat history continuity for the model, handleSendMessage logic currently 
+      // builds context from Knowledge/Memory but relies on `chatSession` object inside service.
+      // To properly "Rewind" the AI context, we should restart the chat with truncated history.
+      // However, current geminiService.startChat initializes empty. 
+      // Advanced: We should reconstruct history.
+      
+      // For simplicity in this implementation: We treat it as a new turn with truncated visual history.
+      // Ideally, we'd pass the truncated history to geminiService.
+      
+      setEditingMessageId(null);
+      // We lose attachments of the edited message in this simple edit flow 
+      // unless we stored them. (Attachments state is cleared after send).
+      // Assuming text-only edit for now or re-attaching is manual.
+      handleSendMessage(editText);
   };
 
   const handleQuickAction = (action: string) => {
       if (!input.trim()) {
-          alert("Please enter a concept first.");
+          alert("Vui lòng nhập nội dung trước.");
           return;
       }
       let prompt = "";
       switch (action) {
-          case 'expand': prompt = `Expand this into a full scene with sensory details:\n\n${input}`; break;
-          case 'describe': prompt = `Write a vivid, atmospheric description:\n\n${input}`; break;
-          case 'dialogue': prompt = `Write a realistic dialogue based on:\n\n${input}`; break;
-          case 'rewrite': prompt = `Rewrite to be more literary and impactful:\n\n${input}`; break;
+          case 'expand': prompt = `Mở rộng ý này thành một cảnh đầy đủ với các chi tiết cảm giác:\n\n${input}`; break;
+          case 'describe': prompt = `Viết một đoạn mô tả sống động, giàu không khí:\n\n${input}`; break;
+          case 'dialogue': prompt = `Viết một đoạn hội thoại thực tế dựa trên:\n\n${input}`; break;
+          case 'rewrite': prompt = `Viết lại đoạn này văn học hơn và ấn tượng hơn:\n\n${input}`; break;
       }
       handleSendMessage(prompt);
       setInput('');
@@ -424,7 +477,7 @@ export default function App() {
       for (let i = 0; i < e.target.files.length; i++) {
         const file = e.target.files[i];
         if (file.size > MAX_FILE_SIZE_BYTES) {
-            alert(`File "${file.name}" too large.`);
+            alert(`File "${file.name}" quá lớn.`);
             continue;
         }
         const reader = new FileReader();
@@ -504,7 +557,7 @@ export default function App() {
                         className="flex items-center gap-3 bg-[#dde3ea] dark:bg-[#2d2e30] hover:bg-[#c4c7c5] dark:hover:bg-[#444746] w-full py-3 px-4 rounded-xl transition-colors text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3]"
                      >
                          <span className="material-symbols-outlined text-xl">add</span>
-                         Create new
+                         Tạo mới
                      </button>
                 </div>
                 
@@ -516,13 +569,13 @@ export default function App() {
                             className="flex-1 flex items-center justify-center gap-2 bg-[#1a73e8] text-white py-2 rounded-lg text-xs font-medium"
                         >
                             <span className="material-symbols-outlined text-sm">download</span>
-                            Install App
+                            Cài đặt App
                         </button>
                     )}
                     <button 
                          onClick={toggleFullScreen}
                          className="flex items-center justify-center p-2 bg-[#f1f3f4] dark:bg-[#3c4043] rounded-lg text-[#5f6368] dark:text-[#e3e3e3]"
-                         title="Toggle Fullscreen"
+                         title="Toàn màn hình"
                     >
                          <span className="material-symbols-outlined text-lg">
                              {isFullScreen ? 'fullscreen_exit' : 'fullscreen'}
@@ -531,7 +584,7 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-2 space-y-1">
-                     <div className="px-3 py-2 text-xs font-medium text-[#5f6368] dark:text-[#9aa0a6]">Recent Chats</div>
+                     <div className="px-3 py-2 text-xs font-medium text-[#5f6368] dark:text-[#9aa0a6]">Đoạn chat gần đây</div>
                      {sessions.map(session => (
                          <div 
                             key={session.id}
@@ -551,7 +604,7 @@ export default function App() {
                          </div>
                      ))}
                      {sessions.length === 0 && (
-                         <div className="px-5 text-xs text-[#5f6368] dark:text-[#80868b] italic">No saved chats</div>
+                         <div className="px-5 text-xs text-[#5f6368] dark:text-[#80868b] italic">Chưa có đoạn chat nào</div>
                      )}
                 </div>
                 
@@ -564,7 +617,7 @@ export default function App() {
                          <span className="material-symbols-outlined text-lg">
                              {isDarkMode ? 'light_mode' : 'dark_mode'}
                          </span>
-                         {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+                         {isDarkMode ? 'Chế độ Sáng' : 'Chế độ Tối'}
                      </button>
                 </div>
             </div>
@@ -592,26 +645,26 @@ export default function App() {
                 </button>
             )}
             <h1 className="text-lg font-medium text-[#444746] dark:text-[#e3e3e3] truncate max-w-[150px] md:max-w-xs">
-                {currentSessionId ? sessions.find(s => s.id === currentSessionId)?.title : 'Untitled Prompt'}
+                {currentSessionId ? sessions.find(s => s.id === currentSessionId)?.title : 'Đoạn chat mới'}
             </h1>
             {isSummarizing && (
                 <span className="text-xs text-[#1a73e8] dark:text-[#8ab4f8] flex items-center gap-1 ml-2 animate-pulse hidden sm:flex">
                     <span className="material-symbols-outlined text-[14px]">psychology</span>
-                    Updating memory...
+                    Đang lưu ký ức...
                 </span>
             )}
           </div>
           <div className="flex items-center gap-1 md:gap-2">
-             <div className="px-3 py-1 rounded bg-[#f1f3f4] dark:bg-[#2d2e30] text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hidden md:block" title="Estimated Total Tokens">
+             <div className="px-3 py-1 rounded bg-[#f1f3f4] dark:bg-[#2d2e30] text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hidden md:block" title="Tổng token ước tính">
                  {sessionTokenCount.toLocaleString()} tokens
              </div>
-             <button onClick={() => setFocusMode(!focusMode)} className="p-2 text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30] rounded-full hidden sm:block" title="Focus Mode">
+             <button onClick={() => setFocusMode(!focusMode)} className="p-2 text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30] rounded-full hidden sm:block" title="Chế độ tập trung">
                  <span className="material-symbols-outlined">fullscreen</span>
              </button>
              <button 
                 onClick={() => setSettingsCollapsed(!settingsCollapsed)}
                 className={`p-2 rounded-full text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30] ${!settingsCollapsed ? 'bg-[#e8f0fe] dark:bg-[#1a2e47] text-[#1a73e8] dark:text-[#8ab4f8]' : ''}`}
-                title="Model Settings"
+                title="Cài đặt Mô hình"
              >
                 <span className="material-symbols-outlined">tune</span>
              </button>
@@ -619,7 +672,7 @@ export default function App() {
                 onClick={() => handleSendMessage()}
                 className="bg-[#1a73e8] dark:bg-[#0b57d0] text-white px-3 md:px-4 py-1.5 rounded-full text-sm font-medium hover:bg-[#155db1] dark:hover:bg-[#0842a0] flex-shrink-0"
              >
-                 <span className="hidden md:inline">Run</span>
+                 <span className="hidden md:inline">Chạy</span>
                  <span className="material-symbols-outlined text-sm md:hidden">play_arrow</span>
              </button>
           </div>
@@ -630,13 +683,13 @@ export default function App() {
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center select-none p-4 text-center">
               <div className="w-16 h-16 bg-gradient-to-br from-[#4285f4] to-[#9b72cb] rounded-xl mb-4 opacity-20"></div>
-              <p className="text-2xl text-[#444746] dark:text-[#e3e3e3] font-normal mb-2">Hello there</p>
-              <p className="text-[#444746] dark:text-[#c4c7c5] text-lg">How can I help you today?</p>
+              <p className="text-2xl text-[#444746] dark:text-[#e3e3e3] font-normal mb-2">Xin chào</p>
+              <p className="text-[#444746] dark:text-[#c4c7c5] text-lg">Tôi có thể giúp gì cho bạn hôm nay?</p>
             </div>
           ) : (
             <div className="flex flex-col space-y-8 pb-40">
               {messages.map((msg) => (
-                <div key={msg.id} className="flex flex-col gap-1">
+                <div key={msg.id} className="flex flex-col gap-1 group">
                   <div className="flex items-center gap-2 mb-1 justify-between">
                       <div className="flex items-center gap-2">
                           {msg.role === Role.MODEL ? (
@@ -644,43 +697,83 @@ export default function App() {
                           ) : (
                               <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg">person</span>
                           )}
-                          <span className="text-sm font-medium text-[#444746] dark:text-[#c4c7c5] uppercase">{msg.role}</span>
+                          <span className="text-sm font-medium text-[#444746] dark:text-[#c4c7c5] uppercase">{msg.role === Role.USER ? 'BẠN' : 'AI'}</span>
                       </div>
-                      {msg.tokenCount && (
-                          <span className="text-[10px] text-[#5f6368] dark:text-[#5e5e5e] font-mono">
-                              {msg.tokenCount} tok
-                          </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                          {msg.tokenCount && (
+                              <span className="text-[10px] text-[#5f6368] dark:text-[#5e5e5e] font-mono">
+                                  {msg.tokenCount} tok
+                              </span>
+                          )}
+                          {/* Edit Button for User Messages */}
+                          {msg.role === Role.USER && !isLoading && editingMessageId !== msg.id && (
+                              <button 
+                                onClick={() => handleEditClick(msg)}
+                                className="opacity-0 group-hover:opacity-100 text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity"
+                                title="Chỉnh sửa & Chạy lại"
+                              >
+                                  <span className="material-symbols-outlined text-[16px]">edit</span>
+                              </button>
+                          )}
+                      </div>
                   </div>
 
                   <div className={`pl-7 ${msg.role === Role.USER ? 'text-[#1f1f1f] dark:text-[#e3e3e3]' : 'text-[#3c4043] dark:text-[#c4c7c5]'}`}>
-                    {msg.attachments && msg.attachments.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {msg.attachments.map((att, idx) => renderAttachment(att, idx, false))}
-                      </div>
-                    )}
-                    
-                    {msg.text === '' && !msg.isError ? (
-                       <div className="h-6 w-24 bg-[#f1f3f4] dark:bg-[#2d2e30] rounded shimmer"></div>
-                    ) : msg.isError ? (
-                       <div className="flex flex-col gap-2 items-start">
-                           <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-300 text-sm">
-                               <span className="flex items-center gap-2 font-medium">
-                                   <span className="material-symbols-outlined">error</span>
-                                   Generation Failed
-                               </span>
-                               <p className="mt-1 opacity-90">{msg.text.replace('System Error: ', '')}</p>
-                           </div>
-                           <button 
-                                onClick={() => handleRetry(msg.id)}
-                                className="flex items-center gap-1 text-xs text-[#1a73e8] dark:text-[#8ab4f8] hover:underline"
-                           >
-                               <span className="material-symbols-outlined text-sm">refresh</span>
-                               Retry
-                           </button>
-                       </div>
+                    {/* Render Edit Mode or Normal Mode */}
+                    {editingMessageId === msg.id ? (
+                        <div className="bg-[#f0f4f9] dark:bg-[#1e1f20] p-3 rounded-lg border border-[#dadce0] dark:border-[#444746]">
+                            <textarea
+                                value={editText}
+                                onChange={(e) => setEditText(e.target.value)}
+                                className="w-full bg-transparent border-none focus:ring-0 resize-none text-[#1f1f1f] dark:text-[#e3e3e3] text-[15px]"
+                                rows={3}
+                            />
+                            <div className="flex justify-end gap-2 mt-2">
+                                <button 
+                                    onClick={handleEditCancel}
+                                    className="px-3 py-1 text-xs font-medium text-[#5f6368] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] rounded"
+                                >
+                                    Hủy
+                                </button>
+                                <button 
+                                    onClick={() => handleEditSubmit(msg.id)}
+                                    className="px-3 py-1 text-xs font-medium bg-[#1a73e8] text-white rounded hover:bg-[#155db1]"
+                                >
+                                    Lưu & Chạy
+                                </button>
+                            </div>
+                        </div>
                     ) : (
-                       <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif text-[15px] md:text-[16px]' : 'text-[15px]'} />
+                        <>
+                            {msg.attachments && msg.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                                {msg.attachments.map((att, idx) => renderAttachment(att, idx, false))}
+                            </div>
+                            )}
+                            
+                            {msg.text === '' && !msg.isError ? (
+                            <div className="h-6 w-24 bg-[#f1f3f4] dark:bg-[#2d2e30] rounded shimmer"></div>
+                            ) : msg.isError ? (
+                            <div className="flex flex-col gap-2 items-start">
+                                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-300 text-sm">
+                                    <span className="flex items-center gap-2 font-medium">
+                                        <span className="material-symbols-outlined">error</span>
+                                        Tạo nội dung thất bại
+                                    </span>
+                                    <p className="mt-1 opacity-90">{msg.text.replace('System Error: ', '')}</p>
+                                </div>
+                                <button 
+                                        onClick={() => handleRetry(msg.id)}
+                                        className="flex items-center gap-1 text-xs text-[#1a73e8] dark:text-[#8ab4f8] hover:underline"
+                                >
+                                    <span className="material-symbols-outlined text-sm">refresh</span>
+                                    Thử lại
+                                </button>
+                            </div>
+                            ) : (
+                            <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif text-[15px] md:text-[16px]' : 'text-[15px]'} />
+                            )}
+                        </>
                     )}
                   </div>
                 </div>
@@ -731,7 +824,7 @@ export default function App() {
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={handleKeyDown}
-                            placeholder="Type something..."
+                            placeholder="Nhập nội dung..."
                             rows={1}
                             className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-2 max-h-64 text-[#1f1f1f] dark:text-[#e3e3e3] placeholder-[#5f6368] dark:placeholder-[#80868b] text-[16px]"
                             style={{ minHeight: '48px' }}
@@ -751,8 +844,8 @@ export default function App() {
                     </div>
                 </div>
                 <div className="text-center mt-2 flex justify-center gap-4 text-[10px] md:text-xs text-[#5f6368] dark:text-[#80868b]">
-                    <span>{messages.length} turns</span>
-                    <span>{input.length} chars</span>
+                    <span>{messages.length} lượt</span>
+                    <span>{input.length} ký tự</span>
                 </div>
            </div>
         </div>

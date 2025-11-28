@@ -8,30 +8,30 @@ export const AVAILABLE_MODELS: ModelConfig[] = [
   {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
-    description: 'Fast, cost-efficient, 1M context',
+    description: 'Nhanh, tiết kiệm, cửa sổ ngữ cảnh 1M',
     isThinking: true
   },
   {
     id: 'gemini-2.5-flash-thinking', 
     name: 'Gemini 2.5 Flash (Thinking)',
-    description: 'Enhanced reasoning for plot logic',
+    description: 'Tăng cường khả năng suy luận cốt truyện',
     isThinking: true
   },
   {
     id: 'gemini-2.5-pro',
     name: 'Gemini 2.5 Pro',
-    description: 'Balanced performance and cost',
+    description: 'Cân bằng hiệu suất và chi phí',
     isThinking: true
   },
   {
     id: 'gemini-3-pro-preview',
     name: 'Gemini 3.0 Pro',
-    description: 'Best for creative writing, 2M context',
+    description: 'Tốt nhất cho sáng tạo, ngữ cảnh 2M',
     isThinking: true
   }
 ];
 
-// System Instruction optimized for EXTREME LENGTH and DETAIL
+// System Instruction optimized for EXTREME LENGTH and DETAIL (KEEP ENGLISH AS REQUESTED)
 export const NOVELIST_SYSTEM_INSTRUCTION = `You are an expert novelist and co-author designed to write EXTENSIVE, HIGH-QUALITY fiction.
 
 CORE DIRECTIVE: WRITE LENGTHY, DETAILED RESPONSES.
@@ -74,32 +74,33 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
 };
 
 export const SAFETY_SETTINGS_OPTIONS = [
-  { value: SafetyThreshold.BLOCK_NONE, label: 'Block None' },
-  { value: SafetyThreshold.BLOCK_ONLY_HIGH, label: 'Block Few' },
-  { value: SafetyThreshold.BLOCK_MEDIUM_AND_ABOVE, label: 'Block Some' },
-  { value: SafetyThreshold.BLOCK_LOW_AND_ABOVE, label: 'Block Most' },
+  { value: SafetyThreshold.BLOCK_NONE, label: 'Không chặn (Block None)' },
+  { value: SafetyThreshold.BLOCK_ONLY_HIGH, label: 'Chặn ít (Block Few)' },
+  { value: SafetyThreshold.BLOCK_MEDIUM_AND_ABOVE, label: 'Chặn vừa (Block Some)' },
+  { value: SafetyThreshold.BLOCK_LOW_AND_ABOVE, label: 'Chặn hầu hết (Block Most)' },
 ];
 
 export const WRITER_PRESETS = {
   [WriterMode.BRAINSTORM]: {
-    label: "Brainstorm",
+    label: "Brainstorm (Lên ý tưởng)",
     temp: 1.6,
     topP: 0.99,
     topK: 64,
-    desc: "High creativity"
+    desc: "Sáng tạo cao"
   },
   [WriterMode.DRAFTING]: {
-    label: "Drafting",
+    label: "Drafting (Viết nháp)",
     temp: 1.0,
     topP: 0.95,
     topK: 40,
-    desc: "Balanced flow"
+    desc: "Cân bằng mạch văn"
   },
   [WriterMode.POLISHING]: {
-    label: "Polishing",
+    label: "Polishing (Biên tập)",
     temp: 0.3,
     topP: 0.8,
     topK: 20,
-    desc: "Precision editing"
+    desc: "Chỉnh sửa chính xác"
   }
 };
+export const APP_CONFIG_STORAGE_KEY = 'ai_studio_clone_config_v2';

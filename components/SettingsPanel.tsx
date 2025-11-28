@@ -79,7 +79,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   };
 
   const extractTextFromPdf = async (file: File): Promise<string> => {
-      if (!window.pdfjsLib) throw new Error("PDF Library not loaded");
+      if (!window.pdfjsLib) throw new Error("Thư viện PDF chưa được tải");
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = "";
@@ -97,7 +97,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           // Check for API Keys first
           const apiKey = config.apiKeys.length > 0 ? config.apiKeys[0] : (process.env.API_KEY || '');
           if (!apiKey) {
-              alert("You must add an API Key in settings first to train/vectorize knowledge files.");
+              alert("Bạn cần nhập API Key trong phần cài đặt trước để huấn luyện/vector hóa tệp tin.");
               return;
           }
 
@@ -106,10 +106,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           
           for (let i = 0; i < e.target.files.length; i++) {
               const file = e.target.files[i];
-              setProcessingStatus(`Processing ${file.name}...`);
+              setProcessingStatus(`Đang xử lý ${file.name}...`);
               
               if (file.size > MAX_FILE_SIZE_BYTES) {
-                  alert(`File ${file.name} too large.`);
+                  alert(`File ${file.name} quá lớn.`);
                   continue;
               }
               try {
@@ -121,7 +121,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   }
                   
                   if (text) {
-                    setProcessingStatus(`Vectorizing ${file.name}... (Training)`);
+                    setProcessingStatus(`Đang vector hóa ${file.name}... (Training)`);
                     const vectorizedFile = await geminiService.vectorizeFile({
                         name: file.name,
                         content: text,
@@ -133,7 +133,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   }
               } catch (err) { 
                   console.error(err);
-                  alert(`Failed to process ${file.name}`);
+                  alert(`Thất bại khi xử lý ${file.name}`);
               }
           }
           if (newFiles.length > 0) {
@@ -171,7 +171,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     `}>
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between p-4 border-b border-[#dadce0] dark:border-[#444746] bg-white dark:bg-[#1e1f20]">
-          <h2 className="font-medium text-lg">Settings</h2>
+          <h2 className="font-medium text-lg">Cài đặt</h2>
           <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700">
               <span className="material-symbols-outlined">close</span>
           </button>
@@ -189,7 +189,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           {apiKeysOpen && (
               <>
                 <p className="text-[10px] text-[#5f6368] dark:text-[#9aa0a6] mb-2">
-                    Enter one key per line. System will auto-rotate on error.
+                    Nhập mỗi key một dòng. Hệ thống sẽ tự động xoay vòng khi lỗi.
                 </p>
                 <textarea
                     value={config.apiKeys ? config.apiKeys.join('\n') : ''}
@@ -200,16 +200,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </>
           )}
            {!apiKeysOpen && config.apiKeys.length === 0 && (
-             <p className="text-[10px] text-red-500 mt-1">No API keys set.</p>
+             <p className="text-[10px] text-red-500 mt-1">Chưa có API Key nào.</p>
            )}
            {!apiKeysOpen && config.apiKeys.length > 0 && (
-             <p className="text-[10px] text-[#5f6368] dark:text-[#9aa0a6] mt-1">{config.apiKeys.length} key(s) loaded</p>
+             <p className="text-[10px] text-[#5f6368] dark:text-[#9aa0a6] mt-1">Đã tải {config.apiKeys.length} key</p>
            )}
       </div>
 
       {/* Model Selection */}
       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746]">
-        <label className="block font-medium text-[#3c4043] dark:text-[#c4c7c5] mb-2">Model</label>
+        <label className="block font-medium text-[#3c4043] dark:text-[#c4c7c5] mb-2">Mô hình (Model)</label>
         <div className="relative">
           <select
             value={config.model}
@@ -226,21 +226,21 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
       {/* Run Settings */}
       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746]">
-        <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5] mb-4">Run settings</h3>
+        <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5] mb-4">Cấu hình chạy (Run settings)</h3>
         
         {/* Writer Mode Preset */}
         <div className="mb-4">
-             <label className="block text-[#5f6368] dark:text-[#c4c7c5] mb-1">Writer Mode</label>
+             <label className="block text-[#5f6368] dark:text-[#c4c7c5] mb-1">Chế độ viết</label>
              <div className="relative">
                 <select 
                     value={config.writerMode}
                     onChange={handleWriterModeChange}
                     className="w-full bg-[#f1f3f4] dark:bg-[#2d2e30] border-none text-[#3c4043] dark:text-[#e3e3e3] py-1.5 px-3 rounded text-xs focus:ring-0 cursor-pointer"
                 >
-                    <option value={WriterMode.BRAINSTORM}>Brainstorm (High Creativity)</option>
-                    <option value={WriterMode.DRAFTING}>Drafting (Balanced)</option>
-                    <option value={WriterMode.POLISHING}>Polishing (Strict)</option>
-                    <option value={WriterMode.CUSTOM}>Custom</option>
+                    <option value={WriterMode.BRAINSTORM}>{WRITER_PRESETS[WriterMode.BRAINSTORM].label}</option>
+                    <option value={WriterMode.DRAFTING}>{WRITER_PRESETS[WriterMode.DRAFTING].label}</option>
+                    <option value={WriterMode.POLISHING}>{WRITER_PRESETS[WriterMode.POLISHING].label}</option>
+                    <option value={WriterMode.CUSTOM}>Tùy chỉnh (Custom)</option>
                 </select>
                 <span className="material-symbols-outlined absolute right-2 top-1.5 text-[#5f6368] dark:text-[#c4c7c5] pointer-events-none text-sm">arrow_drop_down</span>
              </div>
@@ -268,7 +268,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {/* Temperature */}
         <div className="mb-4">
            <div className="flex justify-between mb-1">
-              <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Controls randomness">Temperature</span>
+              <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Độ sáng tạo">Temperature</span>
               <span className="text-[#3c4043] dark:text-[#e3e3e3]">{config.generationConfig.temperature}</span>
            </div>
            <input
@@ -285,7 +285,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {/* Token Limit */}
         <div className="mb-4">
            <div className="flex justify-between mb-1">
-              <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Max Output Tokens">Output length (Tokens)</span>
+              <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Độ dài tối đa">Độ dài Output (Tokens)</span>
               <span className="text-[#3c4043] dark:text-[#e3e3e3]">{config.generationConfig.maxOutputTokens}</span>
            </div>
            <input
@@ -299,7 +299,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {/* Target Word Count (Forced) */}
         <div className="mb-4 p-3 bg-blue-50 dark:bg-[#1e2a3b] rounded border border-blue-100 dark:border-[#0b57d0]">
            <div className="flex justify-between mb-1">
-              <span className="text-blue-800 dark:text-blue-300 font-medium" title="Force AI to write this many words">Target Word Count</span>
+              <span className="text-blue-800 dark:text-blue-300 font-medium" title="Ép AI viết đủ số lượng từ này">Mục tiêu số từ (Target Words)</span>
               <span className="text-blue-800 dark:text-blue-300 font-bold">{config.targetWordCount}</span>
            </div>
            <input
@@ -309,7 +309,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               className="w-full h-1 bg-blue-200 dark:bg-blue-900 rounded-lg appearance-none cursor-pointer accent-blue-600"
             />
             <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-1">
-                Forces AI to expand on details to reach ~{config.targetWordCount} words.
+                Ép AI mở rộng chi tiết để đạt ~{config.targetWordCount} từ.
             </p>
         </div>
 
@@ -319,7 +319,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 className="flex justify-between items-center cursor-pointer py-1"
                 onClick={() => setSafetyOpen(!safetyOpen)}
             >
-                <span className="text-[#5f6368] dark:text-[#c4c7c5]">Safety settings</span>
+                <span className="text-[#5f6368] dark:text-[#c4c7c5]">Cài đặt an toàn (Safety)</span>
                 <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${safetyOpen ? 'rotate-180' : ''}`}>expand_more</span>
             </div>
             {safetyOpen && (
@@ -343,7 +343,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 className="flex justify-between items-center cursor-pointer py-1"
                 onClick={() => setAdvancedOpen(!advancedOpen)}
             >
-                <span className="text-[#5f6368] dark:text-[#c4c7c5]">Advanced settings</span>
+                <span className="text-[#5f6368] dark:text-[#c4c7c5]">Cài đặt nâng cao</span>
                 <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>expand_more</span>
             </div>
             {advancedOpen && (
@@ -389,7 +389,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             value={newStopSequence}
                             onChange={(e) => setNewStopSequence(e.target.value)}
                             onKeyDown={addStopSequence}
-                            placeholder="Add sequence..."
+                            placeholder="Thêm chuỗi dừng..."
                             className="w-full bg-white dark:bg-[#2d2e30] border border-[#dadce0] dark:border-[#5e5e5e] rounded px-2 py-1 text-xs focus:ring-1 focus:ring-[#1a73e8] focus:border-transparent dark:text-[#e3e3e3]"
                          />
                     </div>
@@ -404,7 +404,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 className="flex justify-between items-center cursor-pointer mb-2"
                 onClick={() => setKnowledgeOpen(!knowledgeOpen)}
            >
-               <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Knowledge Base</h3>
+               <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Kho kiến thức (Knowledge)</h3>
                <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${knowledgeOpen ? 'rotate-180' : ''}`}>expand_more</span>
            </div>
            
@@ -417,11 +417,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         className={`flex-1 ${isProcessing ? 'bg-gray-400' : 'bg-[#1a73e8] hover:bg-[#155db1]'} text-white py-1.5 px-3 rounded transition-colors flex items-center justify-center gap-2 text-xs font-medium`}
                     >
                         <span className="material-symbols-outlined text-sm">upload_file</span>
-                        {isProcessing ? 'Processing...' : 'Upload & Train File'}
+                        {isProcessing ? 'Đang xử lý...' : 'Tải lên & Training'}
                     </button>
                     {isProcessing && (
                          <div className="text-[10px] text-[#1a73e8] dark:text-[#8ab4f8] animate-pulse text-center">
-                             {processingStatus || 'Vectorizing content...'}
+                             {processingStatus || 'Đang vector hóa...'}
                          </div>
                     )}
                 </div>
@@ -464,7 +464,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         </div>
                     ))}
                     {config.knowledgeFiles.length === 0 && (
-                        <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] italic text-center">No knowledge files</p>
+                        <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] italic text-center">Chưa có tệp tin nào</p>
                     )}
                 </div>
                </>
@@ -474,7 +474,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       {/* Memory View (Simplified) */}
       <div className="p-4">
            <div className="flex justify-between items-center mb-2">
-               <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Memory</h3>
+               <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Bộ nhớ (Memory)</h3>
                <span className="bg-[#e8f0fe] dark:bg-[#1a2e47] text-[#1967d2] dark:text-[#8ab4f8] text-[10px] px-1.5 py-0.5 rounded">{config.memories.length}</span>
            </div>
            <div className="max-h-32 overflow-y-auto space-y-1">
@@ -483,7 +483,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                        • {m.content}
                    </div>
                ))}
-               {config.memories.length === 0 && <p className="text-[11px] text-[#9aa0a6]">No memories established yet.</p>}
+               {config.memories.length === 0 && <p className="text-[11px] text-[#9aa0a6]">Chưa có ký ức được tạo.</p>}
            </div>
       </div>
 
