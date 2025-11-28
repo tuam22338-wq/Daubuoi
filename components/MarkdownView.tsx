@@ -7,7 +7,6 @@ interface MarkdownViewProps {
 
 const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) => {
   // A very basic formatter to preserve whitespace and handle code blocks visually
-  // In a real production app, use 'react-markdown' or 'marked'
   
   const formatText = (text: string) => {
     const lines = text.split('\n');
@@ -21,7 +20,7 @@ const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) 
       
       if (inCodeBlock) {
         return (
-          <div key={index} className="bg-gray-100 font-mono text-sm px-4 py-0.5 text-gray-800">
+          <div key={index} className="bg-gray-100 dark:bg-[#1e1f20] font-mono text-sm px-4 py-0.5 text-gray-800 dark:text-gray-200">
             {line}
           </div>
         );
@@ -33,7 +32,7 @@ const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) 
         <div key={index} className="min-h-[1.5em] break-words">
             {parts.map((part, i) => {
                 if (part.startsWith('**') && part.endsWith('**')) {
-                    return <strong key={i}>{part.slice(2, -2)}</strong>;
+                    return <strong key={i} className="font-bold text-gray-900 dark:text-gray-100">{part.slice(2, -2)}</strong>;
                 }
                 return <span key={i}>{part}</span>;
             })}
@@ -43,7 +42,7 @@ const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) 
   };
 
   return (
-    <div className={`markdown-body text-gray-800 text-[15px] leading-relaxed ${className}`}>
+    <div className={`markdown-body text-gray-800 dark:text-gray-300 text-[15px] leading-relaxed ${className}`}>
       {formatText(content)}
     </div>
   );

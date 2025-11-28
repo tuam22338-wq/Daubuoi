@@ -45,6 +45,13 @@ export interface ChatMessage {
   };
 }
 
+export interface ChatSession {
+    id: string;
+    title: string;
+    messages: ChatMessage[];
+    updatedAt: number;
+}
+
 export interface ModelConfig {
   id: string;
   name: string;
