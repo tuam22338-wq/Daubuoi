@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { AVAILABLE_MODELS, SAFETY_SETTINGS_OPTIONS, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, WRITER_PRESETS, NOVELIST_SYSTEM_INSTRUCTION } from '../constants';
+
+import React, { useState, useRef, useEffect } from 'react';
+import { AVAILABLE_MODELS, SAFETY_SETTINGS_OPTIONS, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, WRITER_PRESETS, NOVELIST_SYSTEM_INSTRUCTION, GEMINI_VOICES } from '../constants';
 import { AppConfig, KnowledgeFile, WriterMode, MemoryItem } from '../types';
 import { GeminiService } from '../services/geminiService';
 
@@ -32,10 +33,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [systemInstOpen, setSystemInstOpen] = useState(true);
   const [knowledgeOpen, setKnowledgeOpen] = useState(true);
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
+  const [interfaceOpen, setInterfaceOpen] = useState(true);
+  const [ttsOpen, setTtsOpen] = useState(false);
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
   const [newStopSequence, setNewStopSequence] = useState('');
   const knowledgeInputRef = useRef<HTMLInputElement>(null);
+  
+  // No longer fetching browser voices, we use GEMINI_VOICES
 
   if (isCollapsed) return null;
 
@@ -224,6 +230,63 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         </div>
       </div>
 
+       {/* Interface / Appearance Settings */}
+       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746]">
+            <div 
+                className="flex justify-between items-center cursor-pointer py-1"
+                onClick={() => setInterfaceOpen(!interfaceOpen)}
+            >
+                <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Giao diện (Interface)</h3>
+                <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${interfaceOpen ? 'rotate-180' : ''}`}>expand_more</span>
+            </div>
+            {interfaceOpen && (
+                <div className="mt-4">
+                    <div className="flex justify-between mb-1">
+                        <span className="text-[#5f6368] dark:text-[#c4c7c5]">Thu phóng (Zoom)</span>
+                        <span className="text-[#3c4043] dark:text-[#e3e3e3]">{Math.round((config.uiScale || 1) * 100)}%</span>
+                    </div>
+                    <input
+                        type="range" min="0.75" max="1.5" step="0.05"
+                        value={config.uiScale || 1}
+                        onChange={(e) => handleChange('uiScale', parseFloat(e.target.value))}
+                        className="w-full h-1 bg-[#dadce0] dark:bg-[#444746] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
+                    />
+                </div>
+            )}
+       </div>
+
+        {/* Text-to-Speech Settings */}
+        <div className="p-4 border-b border-[#dadce0] dark:border-[#444746]">
+            <div 
+                className="flex justify-between items-center cursor-pointer py-1"
+                onClick={() => setTtsOpen(!ttsOpen)}
+            >
+                <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Gemini Text-to-Speech</h3>
+                <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${ttsOpen ? 'rotate-180' : ''}`}>expand_more</span>
+            </div>
+            {ttsOpen && (
+                <div className="mt-4 space-y-4">
+                    <div>
+                        <label className="block text-[#5f6368] dark:text-[#c4c7c5] mb-1">Giọng nói (Voice)</label>
+                        <div className="relative">
+                            <select
+                                value={config.ttsVoice || 'Kore'}
+                                onChange={(e) => handleChange('ttsVoice', e.target.value)}
+                                className="w-full bg-[#f1f3f4] dark:bg-[#2d2e30] border-none text-[#3c4043] dark:text-[#e3e3e3] py-1.5 px-3 pr-8 rounded text-xs focus:ring-0 cursor-pointer"
+                            >
+                                {GEMINI_VOICES.map((voice) => (
+                                    <option key={voice.value} value={voice.value}>
+                                        {voice.name}
+                                    </option>
+                                ))}
+                            </select>
+                             <span className="material-symbols-outlined absolute right-2 top-1.5 text-[#5f6368] dark:text-[#c4c7c5] pointer-events-none text-sm">arrow_drop_down</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+
       {/* Run Settings */}
       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746]">
         <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5] mb-4">Cấu hình chạy (Run settings)</h3>
@@ -296,23 +359,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             />
         </div>
 
-        {/* Target Word Count (Forced) */}
-        <div className="mb-4 p-3 bg-blue-50 dark:bg-[#1e2a3b] rounded border border-blue-100 dark:border-[#0b57d0]">
-           <div className="flex justify-between mb-1">
-              <span className="text-blue-800 dark:text-blue-300 font-medium" title="Ép AI viết đủ số lượng từ này">Mục tiêu số từ (Target Words)</span>
-              <span className="text-blue-800 dark:text-blue-300 font-bold">{config.targetWordCount}</span>
-           </div>
-           <input
-              type="range" min="500" max="4000" step="100"
-              value={config.targetWordCount}
-              onChange={(e) => handleChange('targetWordCount', parseInt(e.target.value))}
-              className="w-full h-1 bg-blue-200 dark:bg-blue-900 rounded-lg appearance-none cursor-pointer accent-blue-600"
-            />
-            <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-1">
-                Ép AI mở rộng chi tiết để đạt ~{config.targetWordCount} từ.
-            </p>
-        </div>
-
         {/* Safety Settings */}
         <div className="mb-2">
             <div 
@@ -371,6 +417,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             onChange={(e) => handleGenConfigChange('topP', parseFloat(e.target.value))}
                             className="w-full h-1 bg-[#dadce0] dark:bg-[#444746] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
                         />
+                    </div>
+
+                    {/* Target Word Count (Forced) moved here */}
+                    <div className="p-2 bg-blue-50 dark:bg-[#1e2a3b] rounded border border-blue-100 dark:border-[#0b57d0]">
+                        <div className="flex justify-between mb-1">
+                            <span className="text-blue-800 dark:text-blue-300 font-medium" title="Ép AI viết đủ số lượng từ này">Độ dài tối thiểu (Minimum Length)</span>
+                            <span className="text-blue-800 dark:text-blue-300 font-bold">{config.targetWordCount}</span>
+                        </div>
+                        <input
+                            type="range" min="500" max="4000" step="100"
+                            value={config.targetWordCount}
+                            onChange={(e) => handleChange('targetWordCount', parseInt(e.target.value))}
+                            className="w-full h-1 bg-blue-200 dark:bg-blue-900 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                            />
+                            <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-1">
+                                Mục tiêu số từ trong phản hồi của AI.
+                            </p>
                     </div>
                     
                     {/* Stop Sequences */}

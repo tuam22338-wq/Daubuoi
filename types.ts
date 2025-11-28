@@ -102,5 +102,8 @@ export interface AppConfig {
   knowledgeFiles: KnowledgeFile[];
   memories: MemoryItem[]; // Active Long-term memory
   writerMode: WriterMode;
-  targetWordCount: number; // New: Force specific length
+  targetWordCount: number; // Force specific length
+  uiScale: number; // UI Zoom level (0.8 - 1.5)
+  ttsVoice: string; // Voice URI
+  ttsRate: number; // Speaking rate 0.5 - 2.0
 }

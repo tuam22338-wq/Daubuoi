@@ -1,8 +1,18 @@
+
 import { ModelConfig, SafetyThreshold, AppConfig, WriterMode } from './types';
 
 export const MAX_FILE_SIZE_MB = 100;
 export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 export const EMBEDDING_MODEL_ID = 'text-embedding-004';
+export const TTS_MODEL_ID = 'gemini-2.5-flash-preview-tts';
+
+export const GEMINI_VOICES = [
+  { name: 'Kore (Nữ - Trầm ấm)', value: 'Kore' },
+  { name: 'Puck (Nam - Tự nhiên)', value: 'Puck' },
+  { name: 'Charon (Nam - Trầm)', value: 'Charon' },
+  { name: 'Fenrir (Nam - Mạnh mẽ)', value: 'Fenrir' },
+  { name: 'Zephyr (Nữ - Nhẹ nhàng)', value: 'Zephyr' },
+];
 
 export const AVAILABLE_MODELS: ModelConfig[] = [
   {
@@ -70,7 +80,10 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   knowledgeFiles: [],
   memories: [],
   writerMode: WriterMode.DRAFTING,
-  targetWordCount: 3000 // Default target
+  targetWordCount: 3000,
+  uiScale: 1.0, // Default 100% zoom
+  ttsVoice: 'Kore', // Default Gemini Voice
+  ttsRate: 1.0 // Default speed
 };
 
 export const SAFETY_SETTINGS_OPTIONS = [

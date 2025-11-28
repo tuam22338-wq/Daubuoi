@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Role, ChatMessage, Attachment, AppConfig, MemoryItem, ChatSession } from './types';
 import { createGeminiService, estimateTokens, estimateImageTokens } from './services/geminiService';
@@ -19,6 +20,11 @@ export default function App() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   
+  // TTS State
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
   // Edit Mode State
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -46,6 +52,8 @@ export default function App() {
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null); // Ref for the scroll container
+  const isUserAtBottomRef = useRef(true); // Track if user is currently at the bottom
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const turnCountRef = useRef(0);
@@ -59,6 +67,71 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
+
+  // --- TTS Logic ---
+  const stopAudio = () => {
+    if (audioSourceRef.current) {
+        audioSourceRef.current.stop();
+        audioSourceRef.current = null;
+    }
+    setSpeakingMessageId(null);
+  };
+
+  const handleSpeak = async (text: string, id: string) => {
+    // Stop current playback if any
+    if (speakingMessageId === id) {
+        stopAudio();
+        return;
+    }
+    stopAudio();
+
+    // Check API Key first
+    if (appConfig.apiKeys.length === 0) {
+        alert("Vui lòng nhập API Key để sử dụng tính năng Text-to-Speech của Gemini.");
+        return;
+    }
+
+    setSpeakingMessageId(id); // Set loading/active state
+
+    try {
+        if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        
+        // Ensure AudioContext is resumed (browser policy)
+        if (audioContextRef.current.state === 'suspended') {
+            await audioContextRef.current.resume();
+        }
+
+        const audioBuffer = await geminiService.generateSpeech(text, appConfig.ttsVoice || 'Kore');
+        
+        if (!audioBuffer) {
+            alert("Không thể tạo giọng đọc. Vui lòng thử lại.");
+            setSpeakingMessageId(null);
+            return;
+        }
+
+        // Decode audio data
+        const decodedBuffer = await audioContextRef.current.decodeAudioData(audioBuffer);
+        
+        const source = audioContextRef.current.createBufferSource();
+        source.buffer = decodedBuffer;
+        source.connect(audioContextRef.current.destination);
+        
+        source.onended = () => {
+            setSpeakingMessageId(null);
+            audioSourceRef.current = null;
+        };
+        
+        audioSourceRef.current = source;
+        source.start(0);
+
+    } catch (error) {
+        console.error("Audio Playback Error:", error);
+        alert("Lỗi khi phát âm thanh.");
+        setSpeakingMessageId(null);
+    }
+  };
 
   // --- PWA / Fullscreen Logic ---
   useEffect(() => {
@@ -216,6 +289,7 @@ export default function App() {
       turnCountRef.current = 0;
       geminiService.startChat(appConfig); 
       setMobileMenuOpen(false); // Close menu on mobile
+      isUserAtBottomRef.current = true; // Reset scroll state
       return newId;
   }, [appConfig]);
 
@@ -228,6 +302,7 @@ export default function App() {
           setSessionTokenCount(session.totalTokens || 0);
           geminiService.startChat(appConfig); 
           setMobileMenuOpen(false); // Close menu on mobile
+          isUserAtBottomRef.current = true; // Reset scroll state
       }
   };
 
@@ -256,12 +331,26 @@ export default function App() {
     }
   }, [initChat, configLoaded]);
 
+  // --- Scroll Logic ---
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Check user scroll position to toggle auto-scroll
+  const handleScroll = () => {
+      if (chatContainerRef.current) {
+          const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+          // If within 50px of the bottom, we consider the user "at the bottom"
+          const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+          isUserAtBottomRef.current = isAtBottom;
+      }
+  };
+
+  // Only auto-scroll if the user was already at the bottom
   useEffect(() => {
-    scrollToBottom();
+    if (isUserAtBottomRef.current) {
+        scrollToBottom();
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -304,6 +393,10 @@ export default function App() {
   const handleSendMessage = async (overrideText?: string) => {
     const textToSend = overrideText || input;
     if ((!textToSend.trim() && attachments.length === 0) || isLoading) return;
+
+    // Force scroll to bottom when user explicitly sends a message
+    isUserAtBottomRef.current = true;
+    setTimeout(scrollToBottom, 0);
 
     if (!currentSessionId) {
         createNewSession();
@@ -430,28 +523,10 @@ export default function App() {
       const index = messages.findIndex(m => m.id === originalMsgId);
       if (index === -1) return;
 
-      // Slice messages to remove everything AFTER this message (Branching/Rewind)
-      // but exclude the message being edited itself, because handleSendMessage will re-add it as new
       const previousMessages = messages.slice(0, index);
-      
       setMessages(previousMessages);
       
-      // Need to reset session logic if we are rewinding, strictly speaking, 
-      // geminiService might maintain internal history, so it's safer to re-init session
-      // But handleSendMessage builds prompt from input. 
-      // If we want to maintain chat history continuity for the model, handleSendMessage logic currently 
-      // builds context from Knowledge/Memory but relies on `chatSession` object inside service.
-      // To properly "Rewind" the AI context, we should restart the chat with truncated history.
-      // However, current geminiService.startChat initializes empty. 
-      // Advanced: We should reconstruct history.
-      
-      // For simplicity in this implementation: We treat it as a new turn with truncated visual history.
-      // Ideally, we'd pass the truncated history to geminiService.
-      
       setEditingMessageId(null);
-      // We lose attachments of the edited message in this simple edit flow 
-      // unless we stored them. (Attachments state is cleared after send).
-      // Assuming text-only edit for now or re-attaching is manual.
       handleSendMessage(editText);
   };
 
@@ -531,8 +606,13 @@ export default function App() {
     );
   };
 
+  // UI Scale Wrapper Style
+  const appStyle = {
+      zoom: appConfig.uiScale || 1
+  } as React.CSSProperties;
+
   return (
-    <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] font-sans transition-colors duration-200 overflow-hidden">
+    <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] font-sans transition-colors duration-200 overflow-hidden" style={appStyle}>
       
       {/* Sidebar - Prompts/History (Responsive: Overlay on mobile) */}
       {!focusMode && (
@@ -679,7 +759,11 @@ export default function App() {
         </header>
 
         {/* Messages */}
-        <div className={`flex-1 overflow-y-auto px-4 ${focusMode ? 'md:px-48' : 'md:px-16'} py-6 scroll-smooth bg-white dark:bg-[#131314]`}>
+        <div 
+          ref={chatContainerRef}
+          onScroll={handleScroll}
+          className={`flex-1 overflow-y-auto px-4 ${focusMode ? 'md:px-48' : 'md:px-16'} py-6 scroll-smooth bg-white dark:bg-[#131314]`}
+        >
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center select-none p-4 text-center">
               <div className="w-16 h-16 bg-gradient-to-br from-[#4285f4] to-[#9b72cb] rounded-xl mb-4 opacity-20"></div>
@@ -705,6 +789,20 @@ export default function App() {
                                   {msg.tokenCount} tok
                               </span>
                           )}
+                          
+                          {/* TTS Button for AI */}
+                          {msg.role === Role.MODEL && !msg.isError && msg.text && (
+                              <button 
+                                onClick={() => handleSpeak(msg.text, msg.id)}
+                                className={`text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity ${speakingMessageId === msg.id ? 'opacity-100 animate-pulse text-[#1a73e8]' : 'opacity-0 group-hover:opacity-100'}`}
+                                title={speakingMessageId === msg.id ? "Dừng đọc" : "Đọc văn bản (Gemini TTS)"}
+                              >
+                                  <span className="material-symbols-outlined text-[18px]">
+                                      {speakingMessageId === msg.id ? 'stop_circle' : 'volume_up'}
+                                  </span>
+                              </button>
+                          )}
+
                           {/* Edit Button for User Messages */}
                           {msg.role === Role.USER && !isLoading && editingMessageId !== msg.id && (
                               <button 

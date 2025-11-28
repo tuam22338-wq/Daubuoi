@@ -1,6 +1,7 @@
-import { GoogleGenAI, Chat, GenerateContentResponse, Content } from "@google/genai";
+
+import { GoogleGenAI, Chat, GenerateContentResponse, Content, Modality } from "@google/genai";
 import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk } from "../types";
-import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID } from "../constants";
+import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID } from "../constants";
 
 // Declare process to avoid TypeScript errors during build
 declare const process: any;
@@ -93,14 +94,48 @@ export class GeminiService {
       try {
           const response = await client.models.embedContent({
               model: EMBEDDING_MODEL_ID,
-              contents: text // Fixed: SDK uses 'contents'
+              contents: text 
           });
-          // Fixed: SDK returns 'embeddings' array
           return response.embeddings?.[0]?.values || null;
       } catch (e) {
           console.warn("Embedding error (possibly rate limited):", e);
           return null;
       }
+  }
+
+  public async generateSpeech(text: string, voiceName: string): Promise<ArrayBuffer | null> {
+    const client = this.getClient();
+    if (!client) throw new Error("API Key required for TTS");
+
+    try {
+        const response = await client.models.generateContent({
+            model: TTS_MODEL_ID,
+            contents: [{ parts: [{ text }] }],
+            config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName }
+                    }
+                }
+            }
+        });
+
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (!base64Audio) return null;
+
+        const binaryString = atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
+
+    } catch (e) {
+        console.error("Gemini TTS Error:", e);
+        return null;
+    }
   }
 
   public async vectorizeFile(fileObj: {name: string, content: string, type: string, size: number}, apiKey: string): Promise<KnowledgeFile> {
@@ -247,8 +282,6 @@ ${c.content}
     if (appConfig.enableGoogleSearch) tools.push({ googleSearch: {} });
     if (tools.length > 0) config.tools = tools;
 
-    // Safety Settings - Defaulting to BLOCK_NONE if user hasn't customized, 
-    // effectively overriding SDK defaults that might be too strict.
     const threshold = appConfig.safetyThreshold || 'BLOCK_NONE';
     const categories = [
       'HARM_CATEGORY_HATE_SPEECH',
