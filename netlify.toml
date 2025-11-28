@@ -1,3 +1,7 @@
 [build]
-    publish = "dist"
-      command = "npm run build"
+  # optional: if your site is in a subfolder, set base to that folder, otherwise omit or set to "."
+    base = "."
+      # folder that contains the built static files (adjust "dist" to your build output folder)
+        publish = "dist"
+          # build command to produce the publish folder
+            command = "npm run build"
