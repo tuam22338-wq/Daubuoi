@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Role, ChatMessage, Attachment, AppConfig, MemoryItem, ChatSession } from './types';
 import { createGeminiService, estimateTokens, estimateImageTokens } from './services/geminiService';
@@ -256,19 +255,12 @@ export default function App() {
         }
 
         if (usageMetadata) {
-             // Correct the estimates with actual values from service calculation (including RAG overhead)
              const totalTurnTokens = usageMetadata.totalTokens;
-             // Update the model message with its output count
              setMessages(prev => 
                 prev.map(msg => 
                   msg.id === modelMessageId ? { ...msg, tokenCount: usageMetadata.outputTokens } : msg
                 )
              );
-             // Update session total. 
-             // Note: We added estimateUserTokens earlier. Service returns total turn tokens.
-             // We need to be careful not to double count. 
-             // Best to recalc session total based on messages array, or just add the delta.
-             // Simplest: Add outputTokens now.
              setSessionTokenCount(prev => prev + usageMetadata.outputTokens);
         }
       }
@@ -276,12 +268,41 @@ export default function App() {
       console.error(error);
       setMessages(prev => 
         prev.map(msg => 
-          msg.id === modelMessageId ? { ...msg, text: "Error: " + (error as any).message, isError: true } : msg
+          msg.id === modelMessageId ? { 
+              ...msg, 
+              text: "System Error: " + (error as any).message, 
+              isError: true 
+          } : msg
         )
       );
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleRetry = async (messageId: string) => {
+      // Find the user message before this error
+      const errorMsgIndex = messages.findIndex(m => m.id === messageId);
+      if (errorMsgIndex <= 0) return;
+
+      const userMsg = messages[errorMsgIndex - 1];
+      if (userMsg.role !== Role.USER) return;
+
+      // Remove the error message and the user message from state to "replay"
+      setMessages(prev => prev.filter((_, i) => i < errorMsgIndex));
+      
+      // Re-send
+      // We need to restore attachments if any? Ideally yes.
+      // For now, simpler retry: just call handleSendMessage with text. 
+      // Attachments are tricky to restore from processed state back to File objects.
+      // So we will just warn user or try to re-use prompt.
+      
+      // Better approach: Just delete the error message and call send with the user message text.
+      // But we need to handle the state updates.
+      // Simplest: Remove the error message, put the text back in input (or just re-trigger).
+      
+      setMessages(prev => prev.filter(m => m.id !== messageId));
+      handleSendMessage(userMsg.text); 
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -498,6 +519,23 @@ export default function App() {
                     
                     {msg.text === '' && !msg.isError ? (
                        <div className="h-6 w-24 bg-[#f1f3f4] dark:bg-[#2d2e30] rounded shimmer"></div>
+                    ) : msg.isError ? (
+                       <div className="flex flex-col gap-2 items-start">
+                           <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-300 text-sm">
+                               <span className="flex items-center gap-2 font-medium">
+                                   <span className="material-symbols-outlined">error</span>
+                                   Generation Failed
+                               </span>
+                               <p className="mt-1 opacity-90">{msg.text.replace('System Error: ', '')}</p>
+                           </div>
+                           <button 
+                                onClick={() => handleRetry(msg.id)}
+                                className="flex items-center gap-1 text-xs text-[#1a73e8] dark:text-[#8ab4f8] hover:underline"
+                           >
+                               <span className="material-symbols-outlined text-sm">refresh</span>
+                               Retry
+                           </button>
+                       </div>
                     ) : (
                        <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif text-[16px]' : ''} />
                     )}

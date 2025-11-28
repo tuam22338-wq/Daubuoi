@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Chat, GenerateContentResponse, Content } from "@google/genai";
 import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk } from "../types";
 import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID } from "../constants";
@@ -31,8 +30,6 @@ const chunkText = (text: string, size: number): string[] => {
 };
 
 // --- Token Counting Utils (Heuristic) ---
-// Approximate: 1 token ~= 4 chars for English, but often more for code/unicode.
-// Images are fixed cost in some models (258) but standardizing to ~258 for calculation.
 export const estimateTokens = (text: string): number => {
     return Math.ceil(text.length / 4);
 };
@@ -79,7 +76,7 @@ export class GeminiService {
     // Initialized without keys, will receive them in startChat
   }
 
-  // Helper to get a client on demand (for embedding tasks outside active chat)
+  // Helper to get a client on demand
   private getClient(overrideKey?: string): GoogleGenAI | null {
       const key = overrideKey || (this.apiKeys.length > 0 ? this.apiKeys[0] : null);
       if (key) return new GoogleGenAI({ apiKey: key });
@@ -102,21 +99,16 @@ export class GeminiService {
       }
   }
 
-  // Main function to process a file: Chunk -> Embed -> Return KnowledgeFile structure
   public async vectorizeFile(fileObj: {name: string, content: string, type: string, size: number}, apiKey: string): Promise<KnowledgeFile> {
       const chunks = chunkText(fileObj.content, CHUNK_SIZE_CHARS);
       const vectorChunks: VectorChunk[] = [];
 
-      // Process sequentially to avoid hitting rate limits too hard
       for (const chunk of chunks) {
-          // If chunk is too short, skip
           if (chunk.trim().length < 50) continue;
-
           const vector = await this.embedText(chunk, apiKey);
           if (vector) {
               vectorChunks.push({ text: chunk, vector });
           }
-          // Small delay to be gentle on the API
           await new Promise(r => setTimeout(r, 200));
       }
 
@@ -131,15 +123,11 @@ export class GeminiService {
   }
 
   private async getRelevantContext(query: string, files: KnowledgeFile[]): Promise<string> {
-      // Filter files that have vectors
       const vectorizedFiles = files.filter(f => f.chunks && f.chunks.length > 0);
-      
-      // If no vectorized files, return empty (or fallback to old logic if you wanted hybrid)
       if (vectorizedFiles.length === 0) return "";
 
-      // Embed the query
       const queryVector = await this.embedText(query);
-      if (!queryVector) return ""; // Cannot search without query vector
+      if (!queryVector) return ""; 
 
       const allChunks: { content: string; score: number; source: string }[] = [];
 
@@ -155,24 +143,19 @@ export class GeminiService {
           }
       }
 
-      // Sort by relevance
       allChunks.sort((a, b) => b.score - a.score);
 
-      // Select top K chunks
       const selectedChunks = [];
       let currentChars = 0;
-      // Increased context limit because we have large models
       const MAX_RAG_CHARS = 150000; 
 
       for (const chunk of allChunks) {
-          // Threshold for relevance (0.5 is usually decent for embeddings)
           if (chunk.score > 0.4) {
              if (currentChars + chunk.content.length < MAX_RAG_CHARS) {
                  selectedChunks.push(chunk);
                  currentChars += chunk.content.length;
              }
           }
-          // Hard limit on chunk count
           if (selectedChunks.length >= 20) break;
       }
 
@@ -213,7 +196,6 @@ ${c.content}
   public startChat(appConfig: AppConfig) {
     this.currentConfig = appConfig;
     
-    // Fallback to env variable if no keys in config
     const envKey = process.env.API_KEY || '';
     if (appConfig.apiKeys && appConfig.apiKeys.length > 0) {
         this.apiKeys = appConfig.apiKeys;
@@ -261,18 +243,19 @@ ${c.content}
     if (appConfig.enableGoogleSearch) tools.push({ googleSearch: {} });
     if (tools.length > 0) config.tools = tools;
 
-    if (appConfig.safetyThreshold) {
-      const categories = [
-        'HARM_CATEGORY_HATE_SPEECH',
-        'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-        'HARM_CATEGORY_HARASSMENT',
-        'HARM_CATEGORY_DANGEROUS_CONTENT'
-      ];
-      config.safetySettings = categories.map(category => ({
-        category,
-        threshold: appConfig.safetyThreshold
-      }));
-    }
+    // Safety Settings - Defaulting to BLOCK_NONE if user hasn't customized, 
+    // effectively overriding SDK defaults that might be too strict.
+    const threshold = appConfig.safetyThreshold || 'BLOCK_NONE';
+    const categories = [
+      'HARM_CATEGORY_HATE_SPEECH',
+      'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+      'HARM_CATEGORY_HARASSMENT',
+      'HARM_CATEGORY_DANGEROUS_CONTENT'
+    ];
+    config.safetySettings = categories.map(category => ({
+      category,
+      threshold: threshold
+    }));
 
     this.currentChatConfig = {
       model: actualModel,
@@ -293,53 +276,33 @@ ${c.content}
   }
 
   public async *sendMessageStream(text: string, files: File[]) {
-    if (!this.currentConfig) throw new Error("Chat session not initialized");
+    if (!this.currentConfig) throw new Error("Chat session not initialized. Please ensure API Key is set.");
 
-    // Prepare Prompt
+    if (this.apiKeys.length === 0) {
+        throw new Error("No API Key provided. Please add one in Settings.");
+    }
+
     let finalPrompt = text;
     let contextParts = [];
-
-    // Token Tracking for Input
     let inputTokens = estimateTokens(text);
 
-    // 1. Memory Injection
     if (this.currentConfig.memories.length > 0) {
         const memoryText = this.formatMemories(this.currentConfig.memories);
-        contextParts.push(`
-LONG-TERM MEMORY:
-<memory_bank>
-${memoryText}
-</memory_bank>
-`);
+        contextParts.push(`\nLONG-TERM MEMORY:\n<memory_bank>\n${memoryText}\n</memory_bank>`);
         inputTokens += estimateTokens(memoryText);
     }
 
-    // 2. Knowledge Base RAG (Semantic Search)
     if (this.currentConfig.knowledgeFiles.length > 0) {
-        // Now Async call
         const relevantContext = await this.getRelevantContext(text, this.currentConfig.knowledgeFiles);
         if (relevantContext) {
-             contextParts.push(`
-STORY BIBLE CONTEXT (RELEVANT EXCERPTS):
-<active_story_context>
-${relevantContext}
-</active_story_context>
-`);
+             contextParts.push(`\nSTORY BIBLE CONTEXT:\n<active_story_context>\n${relevantContext}\n</active_story_context>`);
              inputTokens += estimateTokens(relevantContext);
         }
     }
 
-    // 3. Length Constraint Injection
     if (this.currentConfig.targetWordCount && this.currentConfig.targetWordCount > 500) {
         const target = this.currentConfig.targetWordCount;
-        const constraintPrompt = `
-[SYSTEM MANDATE: LENGTH CONSTRAINT]
-You MUST generate a response of approximately ${target} words.
-- Do NOT summarize.
-- Expand every scene description, internal thought, and dialogue.
-- Use multiple paragraphs for single actions to increase length and depth.
-- If the user asks for a chapter, it MUST be a full chapter (${target} words), not a snippet.
-`;
+        const constraintPrompt = `\n[SYSTEM MANDATE]\nGenerate approx ${target} words. Expand every detail.`;
         contextParts.push(constraintPrompt);
         inputTokens += estimateTokens(constraintPrompt);
     }
@@ -355,13 +318,12 @@ You MUST generate a response of approximately ${target} words.
       for (const file of files) {
         const part = await fileToGenerativePart(file);
         parts.push(part);
-        inputTokens += estimateImageTokens(); // Add heuristic for image
+        inputTokens += estimateImageTokens();
       }
       if (finalPrompt.trim()) parts.push({ text: finalPrompt });
       messageInput = parts;
     }
 
-    // Attempt Loop for Key Rotation
     let attempt = 0;
     const maxAttempts = Math.max(1, this.apiKeys.length);
 
@@ -369,8 +331,8 @@ You MUST generate a response of approximately ${target} words.
         try {
             if (!this.chatSession) {
                 this.initializeSession([]);
-                if (!this.chatSession) throw new Error("Failed to initialize chat session");
             }
+            if (!this.chatSession) throw new Error("Could not initialize chat session");
 
             const result = await this.chatSession.sendMessageStream({ message: messageInput });
             let fullOutputText = "";
@@ -384,13 +346,10 @@ You MUST generate a response of approximately ${target} words.
                     yield {
                         text: textChunk,
                         groundingMetadata: c.candidates?.[0]?.groundingMetadata,
-                        // Yield usage stats if we want to update live, but normally we update at end.
-                        // For simplicity, we just stream text.
                     };
                 }
             }
             
-            // Calculate final tokens
             const outputTokens = estimateTokens(fullOutputText);
             const totalTurnTokens = inputTokens + outputTokens;
 
@@ -401,8 +360,7 @@ You MUST generate a response of approximately ${target} words.
                     totalTokens: totalTurnTokens
                 }
             };
-
-            return; // Success
+            return; 
 
         } catch (error: any) {
             console.error(`Attempt ${attempt + 1} failed:`, error);
@@ -411,14 +369,19 @@ You MUST generate a response of approximately ${target} words.
                                  error.status === 429 || 
                                  error.message?.includes('Quota') ||
                                  error.message?.includes('403');
+            
+            const isSafetyError = error.message?.includes('SAFETY') || 
+                                  error.message?.includes('blocked');
+
+            if (isSafetyError) {
+                throw new Error("Content blocked by Safety Settings. Try lowering sensitivity in Settings.");
+            }
 
             if (isQuotaError && this.rotateKey()) {
                 let history: Content[] = [];
                 try {
                     history = await this.chatSession?.getHistory() || [];
-                } catch (hErr) {
-                    console.warn("Could not retrieve history", hErr);
-                }
+                } catch (hErr) { console.warn("History retrieval warning", hErr); }
                 this.initializeSession(history);
                 attempt++;
             } else {
