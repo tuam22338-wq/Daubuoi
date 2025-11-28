@@ -36,6 +36,10 @@ export default function App() {
   // Stats State
   const [sessionTokenCount, setSessionTokenCount] = useState(0);
 
+  // PWA / Fullscreen State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isFullScreen, setIsFullScreen] = useState(false);
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -51,6 +55,55 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
+
+  // --- PWA / Fullscreen Logic ---
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === 'accepted') {
+          console.log('User accepted the install prompt');
+        }
+        setDeferredPrompt(null);
+      });
+    }
+  };
+
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().then(() => {
+            setIsFullScreen(true);
+        }).catch(err => {
+            console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+        });
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+            setIsFullScreen(false);
+        }
+    }
+  };
+
+  useEffect(() => {
+      const handleFullScreenChange = () => {
+          setIsFullScreen(!!document.fullscreenElement);
+      };
+      document.addEventListener('fullscreenchange', handleFullScreenChange);
+      return () => document.removeEventListener('fullscreenchange', handleFullScreenChange);
+  }, []);
 
   // --- Config Persistence (IndexedDB) ---
   useEffect(() => {
@@ -455,6 +508,28 @@ export default function App() {
                      </button>
                 </div>
                 
+                {/* Mobile Specific Controls */}
+                <div className="lg:hidden px-4 mb-2 flex gap-2">
+                    {deferredPrompt && (
+                        <button 
+                            onClick={handleInstallClick}
+                            className="flex-1 flex items-center justify-center gap-2 bg-[#1a73e8] text-white py-2 rounded-lg text-xs font-medium"
+                        >
+                            <span className="material-symbols-outlined text-sm">download</span>
+                            Install App
+                        </button>
+                    )}
+                    <button 
+                         onClick={toggleFullScreen}
+                         className="flex items-center justify-center p-2 bg-[#f1f3f4] dark:bg-[#3c4043] rounded-lg text-[#5f6368] dark:text-[#e3e3e3]"
+                         title="Toggle Fullscreen"
+                    >
+                         <span className="material-symbols-outlined text-lg">
+                             {isFullScreen ? 'fullscreen_exit' : 'fullscreen'}
+                         </span>
+                    </button>
+                </div>
+
                 <div className="flex-1 overflow-y-auto px-2 space-y-1">
                      <div className="px-3 py-2 text-xs font-medium text-[#5f6368] dark:text-[#9aa0a6]">Recent Chats</div>
                      {sessions.map(session => (
