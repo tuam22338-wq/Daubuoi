@@ -10,6 +10,9 @@ interface SettingsPanelProps {
   geminiService: GeminiService;
 }
 
+// Declare process to avoid TypeScript errors during build
+declare const process: any;
+
 declare global {
     interface Window {
         pdfjsLib: any;

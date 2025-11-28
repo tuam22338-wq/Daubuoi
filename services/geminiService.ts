@@ -2,6 +2,9 @@ import { GoogleGenAI, Chat, GenerateContentResponse, Content } from "@google/gen
 import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk } from "../types";
 import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID } from "../constants";
 
+// Declare process to avoid TypeScript errors during build
+declare const process: any;
+
 export const fileToGenerativePart = async (file: File): Promise<{ inlineData: { data: string; mimeType: string } }> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -90,9 +93,10 @@ export class GeminiService {
       try {
           const response = await client.models.embedContent({
               model: EMBEDDING_MODEL_ID,
-              content: text
+              contents: text // Fixed: SDK uses 'contents'
           });
-          return response.embedding?.values || null;
+          // Fixed: SDK returns 'embeddings' array
+          return response.embeddings?.[0]?.values || null;
       } catch (e) {
           console.warn("Embedding error (possibly rate limited):", e);
           return null;
