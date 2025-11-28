@@ -1,0 +1,408 @@
+import React, { useState, useRef } from 'react';
+import { AVAILABLE_MODELS, SAFETY_SETTINGS_OPTIONS, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, WRITER_PRESETS, NOVELIST_SYSTEM_INSTRUCTION } from '../constants';
+import { AppConfig, KnowledgeFile, WriterMode, MemoryItem } from '../types';
+
+interface SettingsPanelProps {
+  config: AppConfig;
+  setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
+  isCollapsed: boolean;
+}
+
+declare global {
+    interface Window {
+        pdfjsLib: any;
+    }
+}
+
+const SettingsPanel: React.FC<SettingsPanelProps> = ({
+  config,
+  setConfig,
+  isCollapsed
+}) => {
+  const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [safetyOpen, setSafetyOpen] = useState(false);
+  const [systemInstOpen, setSystemInstOpen] = useState(true);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('');
+  const [newStopSequence, setNewStopSequence] = useState('');
+  const knowledgeInputRef = useRef<HTMLInputElement>(null);
+
+  if (isCollapsed) return null;
+
+  const handleChange = (field: keyof AppConfig, value: any) => {
+    setConfig(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleGenConfigChange = (field: string, value: any) => {
+    setConfig(prev => ({
+      ...prev,
+      generationConfig: {
+        ...prev.generationConfig,
+        [field]: value
+      }
+    }));
+  };
+
+  const handleWriterModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const mode = e.target.value as WriterMode;
+      if (mode === WriterMode.CUSTOM) {
+          handleChange('writerMode', mode);
+          return;
+      }
+      const preset = WRITER_PRESETS[mode];
+      setConfig(prev => ({
+          ...prev,
+          writerMode: mode,
+          generationConfig: {
+              ...prev.generationConfig,
+              temperature: preset.temp,
+              topP: preset.topP,
+              topK: preset.topK
+          }
+      }));
+  };
+
+  const extractTextFromPdf = async (file: File): Promise<string> => {
+      if (!window.pdfjsLib) throw new Error("PDF Library not loaded");
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item: any) => item.str).join(' ');
+          fullText += `--- Page ${i} ---\n${pageText}\n\n`;
+      }
+      return fullText;
+  };
+
+  const handleKnowledgeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files.length > 0) {
+          setIsProcessing(true);
+          const newFiles: KnowledgeFile[] = [];
+          for (let i = 0; i < e.target.files.length; i++) {
+              const file = e.target.files[i];
+              setProcessingStatus(`Processing ${file.name}...`);
+              if (file.size > MAX_FILE_SIZE_BYTES) {
+                  alert(`File ${file.name} too large.`);
+                  continue;
+              }
+              try {
+                  let text = '';
+                  if (file.type === 'application/pdf') {
+                      try { text = await extractTextFromPdf(file); } catch { continue; }
+                  } else {
+                      try { text = await file.text(); } catch { text = ""; }
+                  }
+                  if (text) {
+                    newFiles.push({
+                        id: Date.now() + Math.random().toString(),
+                        name: file.name,
+                        content: text,
+                        type: file.type,
+                        size: file.size
+                    });
+                  }
+              } catch (err) { console.error(err); }
+          }
+          if (newFiles.length > 0) {
+              setConfig(prev => ({ ...prev, knowledgeFiles: [...prev.knowledgeFiles, ...newFiles] }));
+          }
+          setIsProcessing(false);
+          setProcessingStatus('');
+          e.target.value = '';
+      }
+  };
+
+  const addStopSequence = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && newStopSequence.trim()) {
+      e.preventDefault();
+      const current = config.generationConfig.stopSequences || [];
+      if (current.length < 5 && !current.includes(newStopSequence.trim())) {
+        handleGenConfigChange('stopSequences', [...current, newStopSequence.trim()]);
+        setNewStopSequence('');
+      }
+    }
+  };
+
+  const removeStopSequence = (seq: string) => {
+    const current = config.generationConfig.stopSequences || [];
+    handleGenConfigChange('stopSequences', current.filter(s => s !== seq));
+  };
+
+  return (
+    <div className="w-[360px] flex-shrink-0 bg-white border-l border-[#dadce0] h-full overflow-y-auto hidden md:flex flex-col text-[#1f1f1f] font-roboto text-[13px]">
+      
+      {/* Model Selection */}
+      <div className="p-4 border-b border-[#dadce0]">
+        <label className="block font-medium text-[#3c4043] mb-2">Model</label>
+        <div className="relative">
+          <select
+            value={config.model}
+            onChange={(e) => handleChange('model', e.target.value)}
+            className="w-full appearance-none bg-white border border-[#dadce0] hover:border-[#3c4043] text-[#3c4043] py-2 px-3 pr-8 rounded focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent transition-colors"
+          >
+            {AVAILABLE_MODELS.map((model) => (
+              <option key={model.id} value={model.id}>{model.name}</option>
+            ))}
+          </select>
+          <span className="material-symbols-outlined absolute right-2 top-2.5 text-[#5f6368] pointer-events-none text-lg">arrow_drop_down</span>
+        </div>
+      </div>
+
+      {/* Run Settings */}
+      <div className="p-4 border-b border-[#dadce0]">
+        <h3 className="font-medium text-[#3c4043] mb-4">Run settings</h3>
+        
+        {/* Writer Mode Preset */}
+        <div className="mb-4">
+             <label className="block text-[#5f6368] mb-1">Writer Mode</label>
+             <div className="relative">
+                <select 
+                    value={config.writerMode}
+                    onChange={handleWriterModeChange}
+                    className="w-full bg-[#f1f3f4] border-none text-[#3c4043] py-1.5 px-3 rounded text-xs focus:ring-0 cursor-pointer"
+                >
+                    <option value={WriterMode.BRAINSTORM}>Brainstorm (High Creativity)</option>
+                    <option value={WriterMode.DRAFTING}>Drafting (Balanced)</option>
+                    <option value={WriterMode.POLISHING}>Polishing (Strict)</option>
+                    <option value={WriterMode.CUSTOM}>Custom</option>
+                </select>
+                <span className="material-symbols-outlined absolute right-2 top-1.5 text-[#5f6368] pointer-events-none text-sm">arrow_drop_down</span>
+             </div>
+        </div>
+
+        {/* System Instructions */}
+        <div className="mb-4">
+             <div 
+                className="flex justify-between items-center cursor-pointer mb-2"
+                onClick={() => setSystemInstOpen(!systemInstOpen)}
+             >
+                 <label className="font-medium text-[#3c4043] select-none">System Instructions</label>
+                 <span className={`material-symbols-outlined text-[#5f6368] text-lg transform transition-transform ${systemInstOpen ? 'rotate-180' : ''}`}>expand_more</span>
+             </div>
+             {systemInstOpen && (
+                 <textarea
+                    value={config.systemInstruction}
+                    onChange={(e) => handleChange('systemInstruction', e.target.value)}
+                    className="w-full bg-[#f8f9fa] border border-[#dadce0] rounded p-2 text-xs focus:bg-white focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent resize-y min-h-[100px] font-mono text-[#3c4043]"
+                    placeholder="Enter system instructions..."
+                 />
+             )}
+        </div>
+
+        {/* Temperature */}
+        <div className="mb-4">
+           <div className="flex justify-between mb-1">
+              <span className="text-[#5f6368]" title="Controls randomness">Temperature</span>
+              <span className="text-[#3c4043]">{config.generationConfig.temperature}</span>
+           </div>
+           <input
+              type="range" min="0" max="2" step="0.1"
+              value={config.generationConfig.temperature}
+              onChange={(e) => {
+                  handleGenConfigChange('temperature', parseFloat(e.target.value));
+                  handleChange('writerMode', WriterMode.CUSTOM);
+              }}
+              className="w-full h-1 bg-[#dadce0] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
+            />
+        </div>
+
+        {/* Token Limit */}
+        <div className="mb-4">
+           <div className="flex justify-between mb-1">
+              <span className="text-[#5f6368]" title="Max Output Tokens">Output length (Tokens)</span>
+              <span className="text-[#3c4043]">{config.generationConfig.maxOutputTokens}</span>
+           </div>
+           <input
+              type="range" min="100" max="8192" step="100"
+              value={config.generationConfig.maxOutputTokens}
+              onChange={(e) => handleGenConfigChange('maxOutputTokens', parseInt(e.target.value))}
+              className="w-full h-1 bg-[#dadce0] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
+            />
+        </div>
+
+        {/* Target Word Count (Forced) */}
+        <div className="mb-4 p-3 bg-blue-50 rounded border border-blue-100">
+           <div className="flex justify-between mb-1">
+              <span className="text-blue-800 font-medium" title="Force AI to write this many words">Target Word Count</span>
+              <span className="text-blue-800 font-bold">{config.targetWordCount}</span>
+           </div>
+           <input
+              type="range" min="500" max="4000" step="100"
+              value={config.targetWordCount}
+              onChange={(e) => handleChange('targetWordCount', parseInt(e.target.value))}
+              className="w-full h-1 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <p className="text-[10px] text-blue-600 mt-1">
+                Forces AI to expand on details to reach ~{config.targetWordCount} words.
+            </p>
+        </div>
+
+        {/* Safety Settings */}
+        <div className="mb-2">
+            <div 
+                className="flex justify-between items-center cursor-pointer py-1"
+                onClick={() => setSafetyOpen(!safetyOpen)}
+            >
+                <span className="text-[#5f6368]">Safety settings</span>
+                <span className={`material-symbols-outlined text-[#5f6368] text-lg transform transition-transform ${safetyOpen ? 'rotate-180' : ''}`}>expand_more</span>
+            </div>
+            {safetyOpen && (
+                <div className="mt-2">
+                    <select
+                        value={config.safetyThreshold}
+                        onChange={(e) => handleChange('safetyThreshold', e.target.value)}
+                        className="w-full bg-white border border-[#dadce0] text-[#3c4043] py-1.5 px-2 rounded text-xs focus:ring-1 focus:ring-[#1a73e8]"
+                    >
+                        {SAFETY_SETTINGS_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                    </select>
+                </div>
+            )}
+        </div>
+
+        {/* Advanced Settings */}
+        <div className="mb-2">
+            <div 
+                className="flex justify-between items-center cursor-pointer py-1"
+                onClick={() => setAdvancedOpen(!advancedOpen)}
+            >
+                <span className="text-[#5f6368]">Advanced settings</span>
+                <span className={`material-symbols-outlined text-[#5f6368] text-lg transform transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>expand_more</span>
+            </div>
+            {advancedOpen && (
+                <div className="space-y-4 mt-2 pl-1">
+                     <div>
+                        <div className="flex justify-between mb-1">
+                            <span className="text-[#5f6368]">Top K</span>
+                            <span className="text-[#3c4043]">{config.generationConfig.topK}</span>
+                        </div>
+                        <input
+                            type="range" min="1" max="100" step="1"
+                            value={config.generationConfig.topK}
+                            onChange={(e) => handleGenConfigChange('topK', parseInt(e.target.value))}
+                            className="w-full h-1 bg-[#dadce0] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
+                        />
+                    </div>
+                    <div>
+                        <div className="flex justify-between mb-1">
+                            <span className="text-[#5f6368]">Top P</span>
+                            <span className="text-[#3c4043]">{config.generationConfig.topP}</span>
+                        </div>
+                        <input
+                            type="range" min="0" max="1" step="0.01"
+                            value={config.generationConfig.topP}
+                            onChange={(e) => handleGenConfigChange('topP', parseFloat(e.target.value))}
+                            className="w-full h-1 bg-[#dadce0] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
+                        />
+                    </div>
+                    
+                    {/* Stop Sequences */}
+                    <div>
+                         <label className="block text-[#5f6368] mb-1">Stop sequences</label>
+                         <div className="flex flex-wrap gap-1 mb-1">
+                             {config.generationConfig.stopSequences.map((seq, idx) => (
+                                 <span key={idx} className="bg-[#e8f0fe] text-[#1967d2] px-2 py-0.5 rounded-full text-xs flex items-center">
+                                     {seq}
+                                     <button onClick={() => removeStopSequence(seq)} className="ml-1 hover:text-[#1a73e8]">×</button>
+                                 </span>
+                             ))}
+                         </div>
+                         <input
+                            type="text"
+                            value={newStopSequence}
+                            onChange={(e) => setNewStopSequence(e.target.value)}
+                            onKeyDown={addStopSequence}
+                            placeholder="Add sequence..."
+                            className="w-full bg-white border border-[#dadce0] rounded px-2 py-1 text-xs focus:ring-1 focus:ring-[#1a73e8] focus:border-transparent"
+                         />
+                    </div>
+                </div>
+            )}
+        </div>
+      </div>
+
+      {/* Data / Knowledge */}
+      <div className="p-4 border-b border-[#dadce0]">
+           <div 
+                className="flex justify-between items-center cursor-pointer mb-2"
+                onClick={() => setKnowledgeOpen(!knowledgeOpen)}
+           >
+               <h3 className="font-medium text-[#3c4043]">Knowledge Base</h3>
+               <span className={`material-symbols-outlined text-[#5f6368] text-lg transform transition-transform ${knowledgeOpen ? 'rotate-180' : ''}`}>expand_more</span>
+           </div>
+           
+           {knowledgeOpen && (
+               <>
+                <div className="flex items-center gap-2 mb-3">
+                    <button 
+                        onClick={() => knowledgeInputRef.current?.click()}
+                        disabled={isProcessing}
+                        className="flex-1 bg-[#1a73e8] text-white py-1.5 px-3 rounded hover:bg-[#155db1] transition-colors flex items-center justify-center gap-2 text-xs font-medium"
+                    >
+                        <span className="material-symbols-outlined text-sm">upload_file</span>
+                        Upload File
+                    </button>
+                    {isProcessing && <span className="material-symbols-outlined text-[#1a73e8] text-sm animate-spin">progress_activity</span>}
+                </div>
+                <input 
+                    type="file" 
+                    ref={knowledgeInputRef}
+                    className="hidden" 
+                    multiple
+                    accept=".txt,.md,.json,.csv,.pdf,.doc,.docx"
+                    onChange={handleKnowledgeUpload}
+                />
+                
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {config.knowledgeFiles.map(file => (
+                        <div key={file.id} className="flex items-center justify-between bg-[#f8f9fa] p-2 rounded border border-[#dadce0] group hover:bg-[#f1f3f4]">
+                            <div className="flex items-center gap-2 overflow-hidden">
+                                <span className="material-symbols-outlined text-[#5f6368] text-sm">description</span>
+                                <span className="text-xs text-[#3c4043] truncate max-w-[180px]">{file.name}</span>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    setConfig(prev => ({
+                                        ...prev,
+                                        knowledgeFiles: prev.knowledgeFiles.filter(f => f.id !== file.id)
+                                    }));
+                                }}
+                                className="text-[#5f6368] hover:text-[#d93025] opacity-0 group-hover:opacity-100"
+                            >
+                                <span className="material-symbols-outlined text-sm">close</span>
+                            </button>
+                        </div>
+                    ))}
+                    {config.knowledgeFiles.length === 0 && (
+                        <p className="text-xs text-[#5f6368] italic text-center">No files uploaded</p>
+                    )}
+                </div>
+               </>
+           )}
+      </div>
+
+      {/* Memory View (Simplified) */}
+      <div className="p-4">
+           <div className="flex justify-between items-center mb-2">
+               <h3 className="font-medium text-[#3c4043]">Memory</h3>
+               <span className="bg-[#e8f0fe] text-[#1967d2] text-[10px] px-1.5 py-0.5 rounded">{config.memories.length}</span>
+           </div>
+           <div className="max-h-32 overflow-y-auto space-y-1">
+               {config.memories.map(m => (
+                   <div key={m.id} className="text-[11px] text-[#5f6368] border-b border-[#f1f3f4] pb-1">
+                       • {m.content}
+                   </div>
+               ))}
+               {config.memories.length === 0 && <p className="text-[11px] text-[#9aa0a6]">No memories established yet.</p>}
+           </div>
+      </div>
+
+    </div>
+  );
+};
+
+export default SettingsPanel;

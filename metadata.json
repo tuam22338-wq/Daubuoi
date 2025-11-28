@@ -1,0 +1,5 @@
+{
+  "name": "AI Studio Clone",
+  "description": "A robust chatbot application mimicking the Google AI Studio interface with Gemini 2.5 Flash and Pro models.",
+  "requestFramePermissions": []
+}
