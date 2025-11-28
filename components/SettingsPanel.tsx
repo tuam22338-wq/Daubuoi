@@ -1,11 +1,13 @@
 import React, { useState, useRef } from 'react';
 import { AVAILABLE_MODELS, SAFETY_SETTINGS_OPTIONS, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB, WRITER_PRESETS, NOVELIST_SYSTEM_INSTRUCTION } from '../constants';
 import { AppConfig, KnowledgeFile, WriterMode, MemoryItem } from '../types';
+import { GeminiService } from '../services/geminiService';
 
 interface SettingsPanelProps {
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   isCollapsed: boolean;
+  geminiService: GeminiService;
 }
 
 declare global {
@@ -17,12 +19,14 @@ declare global {
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
   config,
   setConfig,
-  isCollapsed
+  isCollapsed,
+  geminiService
 }) => {
   const [advancedOpen, setAdvancedOpen] = useState(true);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [systemInstOpen, setSystemInstOpen] = useState(true);
   const [knowledgeOpen, setKnowledgeOpen] = useState(true);
+  const [apiKeysOpen, setApiKeysOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
   const [newStopSequence, setNewStopSequence] = useState('');
@@ -63,6 +67,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       }));
   };
 
+  const handleApiKeysChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const text = e.target.value;
+      const keys = text.split('\n').map(k => k.trim()).filter(k => k.length > 0);
+      handleChange('apiKeys', keys);
+  };
+
   const extractTextFromPdf = async (file: File): Promise<string> => {
       if (!window.pdfjsLib) throw new Error("PDF Library not loaded");
       const arrayBuffer = await file.arrayBuffer();
@@ -79,11 +89,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const handleKnowledgeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
+          // Check for API Keys first
+          const apiKey = config.apiKeys.length > 0 ? config.apiKeys[0] : (process.env.API_KEY || '');
+          if (!apiKey) {
+              alert("You must add an API Key in settings first to train/vectorize knowledge files.");
+              return;
+          }
+
           setIsProcessing(true);
           const newFiles: KnowledgeFile[] = [];
+          
           for (let i = 0; i < e.target.files.length; i++) {
               const file = e.target.files[i];
               setProcessingStatus(`Processing ${file.name}...`);
+              
               if (file.size > MAX_FILE_SIZE_BYTES) {
                   alert(`File ${file.name} too large.`);
                   continue;
@@ -95,16 +114,22 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   } else {
                       try { text = await file.text(); } catch { text = ""; }
                   }
+                  
                   if (text) {
-                    newFiles.push({
-                        id: Date.now() + Math.random().toString(),
+                    setProcessingStatus(`Vectorizing ${file.name}... (Training)`);
+                    const vectorizedFile = await geminiService.vectorizeFile({
                         name: file.name,
                         content: text,
                         type: file.type,
                         size: file.size
-                    });
+                    }, apiKey);
+                    
+                    newFiles.push(vectorizedFile);
                   }
-              } catch (err) { console.error(err); }
+              } catch (err) { 
+                  console.error(err);
+                  alert(`Failed to process ${file.name}`);
+              }
           }
           if (newFiles.length > 0) {
               setConfig(prev => ({ ...prev, knowledgeFiles: [...prev.knowledgeFiles, ...newFiles] }));
@@ -134,6 +159,36 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   return (
     <div className="w-[360px] flex-shrink-0 bg-white dark:bg-[#1e1f20] border-l border-[#dadce0] dark:border-[#444746] h-full overflow-y-auto hidden md:flex flex-col text-[#1f1f1f] dark:text-[#e3e3e3] font-roboto text-[13px]">
       
+      {/* API Key Input */}
+      <div className="p-4 border-b border-[#dadce0] dark:border-[#444746] bg-blue-50 dark:bg-[#1a2e47]/30">
+          <div 
+              className="flex justify-between items-center cursor-pointer mb-1"
+              onClick={() => setApiKeysOpen(!apiKeysOpen)}
+          >
+              <label className="block font-medium text-[#3c4043] dark:text-[#8ab4f8]">API Keys</label>
+              <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${apiKeysOpen ? 'rotate-180' : ''}`}>expand_more</span>
+          </div>
+          {apiKeysOpen && (
+              <>
+                <p className="text-[10px] text-[#5f6368] dark:text-[#9aa0a6] mb-2">
+                    Enter one key per line. System will auto-rotate on error.
+                </p>
+                <textarea
+                    value={config.apiKeys ? config.apiKeys.join('\n') : ''}
+                    onChange={handleApiKeysChange}
+                    placeholder="AIzaSy...&#10;AIzaSy..."
+                    className="w-full bg-white dark:bg-[#2d2e30] border border-[#dadce0] dark:border-[#5e5e5e] rounded p-2 text-xs focus:ring-1 focus:ring-[#1a73e8] font-mono h-24 resize-y text-[#3c4043] dark:text-[#e3e3e3]"
+                />
+              </>
+          )}
+           {!apiKeysOpen && config.apiKeys.length === 0 && (
+             <p className="text-[10px] text-red-500 mt-1">No API keys set.</p>
+           )}
+           {!apiKeysOpen && config.apiKeys.length > 0 && (
+             <p className="text-[10px] text-[#5f6368] dark:text-[#9aa0a6] mt-1">{config.apiKeys.length} key(s) loaded</p>
+           )}
+      </div>
+
       {/* Model Selection */}
       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746]">
         <label className="block font-medium text-[#3c4043] dark:text-[#c4c7c5] mb-2">Model</label>
@@ -337,16 +392,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
            
            {knowledgeOpen && (
                <>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex flex-col gap-2 mb-3">
                     <button 
                         onClick={() => knowledgeInputRef.current?.click()}
                         disabled={isProcessing}
-                        className="flex-1 bg-[#1a73e8] text-white py-1.5 px-3 rounded hover:bg-[#155db1] transition-colors flex items-center justify-center gap-2 text-xs font-medium"
+                        className={`flex-1 ${isProcessing ? 'bg-gray-400' : 'bg-[#1a73e8] hover:bg-[#155db1]'} text-white py-1.5 px-3 rounded transition-colors flex items-center justify-center gap-2 text-xs font-medium`}
                     >
                         <span className="material-symbols-outlined text-sm">upload_file</span>
-                        Upload File
+                        {isProcessing ? 'Processing...' : 'Upload & Train File'}
                     </button>
-                    {isProcessing && <span className="material-symbols-outlined text-[#1a73e8] text-sm animate-spin">progress_activity</span>}
+                    {isProcessing && (
+                         <div className="text-[10px] text-[#1a73e8] dark:text-[#8ab4f8] animate-pulse text-center">
+                             {processingStatus || 'Vectorizing content...'}
+                         </div>
+                    )}
                 </div>
                 <input 
                     type="file" 
@@ -361,8 +420,17 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     {config.knowledgeFiles.map(file => (
                         <div key={file.id} className="flex items-center justify-between bg-[#f8f9fa] dark:bg-[#2d2e30] p-2 rounded border border-[#dadce0] dark:border-[#5e5e5e] group hover:bg-[#f1f3f4] dark:hover:bg-[#3c4043]">
                             <div className="flex items-center gap-2 overflow-hidden">
-                                <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-sm">description</span>
-                                <span className="text-xs text-[#3c4043] dark:text-[#e3e3e3] truncate max-w-[180px]">{file.name}</span>
+                                <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-sm">
+                                    {file.chunks && file.chunks.length > 0 ? 'psychology' : 'description'}
+                                </span>
+                                <div className="flex flex-col truncate max-w-[160px]">
+                                    <span className="text-xs text-[#3c4043] dark:text-[#e3e3e3] truncate">{file.name}</span>
+                                    {file.chunks && (
+                                        <span className="text-[9px] text-green-600 dark:text-green-400">
+                                            Vectorized ({file.chunks.length} chunks)
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                             <button 
                                 onClick={() => {
@@ -378,7 +446,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         </div>
                     ))}
                     {config.knowledgeFiles.length === 0 && (
-                        <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] italic text-center">No files uploaded</p>
+                        <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] italic text-center">No knowledge files</p>
                     )}
                 </div>
                </>

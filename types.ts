@@ -1,3 +1,4 @@
+
 export enum Role {
   USER = 'user',
   MODEL = 'model'
@@ -11,10 +12,16 @@ export interface Attachment {
   base64Data?: string;
 }
 
+export interface VectorChunk {
+  text: string;
+  vector: number[];
+}
+
 export interface KnowledgeFile {
   id: string;
   name: string;
-  content: string; // Text content extracted from file
+  content: string; // Keep raw text for reference
+  chunks?: VectorChunk[]; // Vectorized chunks for RAG
   type: string;
   size: number;
 }
@@ -43,6 +50,7 @@ export interface ChatMessage {
   groundingMetadata?: {
     groundingChunks: GroundingChunk[];
   };
+  tokenCount?: number; // Estimated tokens for this message
 }
 
 export interface ChatSession {
@@ -50,6 +58,7 @@ export interface ChatSession {
     title: string;
     messages: ChatMessage[];
     updatedAt: number;
+    totalTokens?: number; // Aggregate count
 }
 
 export interface ModelConfig {
@@ -84,6 +93,7 @@ export enum WriterMode {
 }
 
 export interface AppConfig {
+  apiKeys: string[]; // List of API keys for rotation
   model: string;
   systemInstruction: string;
   generationConfig: GenerationConfig;

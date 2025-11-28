@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Role, ChatMessage, Attachment, AppConfig, MemoryItem, ChatSession } from './types';
-import { createGeminiService } from './services/geminiService';
+import { createGeminiService, estimateTokens, estimateImageTokens } from './services/geminiService';
 import { DEFAULT_APP_CONFIG, MAX_FILE_SIZE_BYTES } from './constants';
 import SettingsPanel from './components/SettingsPanel';
 import MarkdownView from './components/MarkdownView';
+import { saveSession, getSessions, deleteSessionFromDB } from './db';
 
 const geminiService = createGeminiService();
 
@@ -25,6 +27,9 @@ export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
+  // Stats State
+  const [sessionTokenCount, setSessionTokenCount] = useState(0);
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -41,45 +46,54 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // --- Persistence Logic ---
+  // --- Persistence Logic (IndexedDB) ---
 
-  // Load sessions from LocalStorage on mount
+  // Load sessions from DB on mount
   useEffect(() => {
-    try {
-      const savedSessions = localStorage.getItem('chat_sessions');
-      if (savedSessions) {
-        const parsed = JSON.parse(savedSessions);
-        setSessions(parsed);
-      }
-    } catch (e) {
-      console.error("Failed to load sessions", e);
-    }
+    const loadSessions = async () => {
+        try {
+            const savedSessions = await getSessions();
+            setSessions(savedSessions);
+        } catch (e) {
+            console.error("Failed to load sessions from DB", e);
+        }
+    };
+    loadSessions();
   }, []);
 
-  // Save sessions to LocalStorage whenever they change
+  // Save current session to DB whenever messages update
   useEffect(() => {
-      localStorage.setItem('chat_sessions', JSON.stringify(sessions));
-  }, [sessions]);
+      const saveCurrent = async () => {
+          if (currentSessionId && messages.length > 0) {
+              const currentTitle = sessions.find(s => s.id === currentSessionId)?.title || 'Untitled Chat';
+              const newTitle = currentTitle === 'Untitled Chat' && messages[0].role === Role.USER 
+                               ? (messages[0].text.slice(0, 30) + (messages[0].text.length > 30 ? '...' : '')) 
+                               : currentTitle;
+              
+              const sessionToSave: ChatSession = {
+                  id: currentSessionId,
+                  title: newTitle,
+                  messages: messages,
+                  updatedAt: Date.now(),
+                  totalTokens: sessionTokenCount
+              };
 
-  // Auto-save current messages to the active session
-  useEffect(() => {
-      if (currentSessionId && messages.length > 0) {
-          setSessions(prev => prev.map(session => {
-              if (session.id === currentSessionId) {
-                  return {
-                      ...session,
-                      messages: messages,
-                      updatedAt: Date.now(),
-                      // Update title based on first user message if it's "Untitled"
-                      title: session.title === 'Untitled Chat' && messages[0].role === Role.USER 
-                             ? (messages[0].text.slice(0, 30) + (messages[0].text.length > 30 ? '...' : '')) 
-                             : session.title
-                  };
-              }
-              return session;
-          }));
-      }
-  }, [messages, currentSessionId]);
+              await saveSession(sessionToSave);
+              
+              // Update local state list to reflect title change or timestamp
+              setSessions(prev => {
+                  const exists = prev.find(s => s.id === currentSessionId);
+                  if (exists) {
+                      return prev.map(s => s.id === currentSessionId ? sessionToSave : s);
+                  }
+                  return [sessionToSave, ...prev];
+              });
+          }
+      };
+      // Debounce slightly to avoid slamming DB
+      const timeout = setTimeout(saveCurrent, 500);
+      return () => clearTimeout(timeout);
+  }, [messages, currentSessionId, sessionTokenCount]);
 
   const createNewSession = useCallback(() => {
       const newId = Date.now().toString();
@@ -87,14 +101,17 @@ export default function App() {
           id: newId,
           title: 'Untitled Chat',
           messages: [],
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          totalTokens: 0
       };
+      // Optimistically add to list
       setSessions(prev => [newSession, ...prev]);
       setCurrentSessionId(newId);
       setMessages([]);
       setAttachments([]);
+      setSessionTokenCount(0);
       turnCountRef.current = 0;
-      geminiService.startChat(appConfig); // Reset gemini chat
+      geminiService.startChat(appConfig); 
       return newId;
   }, [appConfig]);
 
@@ -104,31 +121,25 @@ export default function App() {
           setCurrentSessionId(sessionId);
           setMessages(session.messages);
           setAttachments([]);
-          // We need to restart the chat service with context from history if we wanted to be perfect, 
-          // but for now, we just reset the service and let it build context from new messages or potentially 
-          // re-inject history if we implemented history injection in startChat. 
-          // For this clone, restarting is safer to avoid state mixup.
+          setSessionTokenCount(session.totalTokens || 0);
           geminiService.startChat(appConfig); 
-          // Note: In a real app, we'd feed `session.messages` into `geminiService` history.
       }
   };
 
-  const deleteSession = (e: React.MouseEvent, sessionId: string) => {
+  const deleteSession = async (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
-      setSessions(prev => prev.filter(s => s.id !== sessionId));
-      if (currentSessionId === sessionId) {
-          setMessages([]);
-          setCurrentSessionId(null);
+      try {
+          await deleteSessionFromDB(sessionId);
+          setSessions(prev => prev.filter(s => s.id !== sessionId));
+          if (currentSessionId === sessionId) {
+              setMessages([]);
+              setCurrentSessionId(null);
+              setSessionTokenCount(0);
+          }
+      } catch (err) {
+          console.error("Failed to delete session", err);
       }
   };
-
-  // Initialize first session if none exists
-  useEffect(() => {
-     if (sessions.length === 0 && !currentSessionId) {
-         // Don't create automatically to avoid hydration mismatch, wait for user action or create mostly empty
-         // But for UX, let's just leave it blank until they type or click new
-     }
-  }, [sessions.length, currentSessionId]);
 
   const initChat = useCallback(() => {
     geminiService.startChat(appConfig);
@@ -187,20 +198,25 @@ export default function App() {
     const textToSend = overrideText || input;
     if ((!textToSend.trim() && attachments.length === 0) || isLoading) return;
 
-    // If no session exists, create one
     if (!currentSessionId) {
         createNewSession();
     }
 
+    // Estimate user tokens instantly for UI
+    const estimatedUserTokens = estimateTokens(textToSend) + (attachments.length * estimateImageTokens());
+    
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       role: Role.USER,
       text: textToSend,
       attachments: [...attachments],
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      tokenCount: estimatedUserTokens
     };
 
     setMessages(prev => [...prev, userMessage]);
+    setSessionTokenCount(prev => prev + estimatedUserTokens);
+    
     if (!overrideText) setInput('');
     setAttachments([]);
     setIsLoading(true);
@@ -222,18 +238,39 @@ export default function App() {
     try {
       const stream = geminiService.sendMessageStream(userMessage.text, filesToSend);
       let fullText = '';
+      
       for await (const chunk of stream) {
-        const { text, groundingMetadata } = chunk;
-        if (text) fullText += text;
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === modelMessageId ? { 
-                ...msg, 
-                text: fullText,
-                groundingMetadata: groundingMetadata || msg.groundingMetadata 
-            } : msg
-          )
-        );
+        const { text, groundingMetadata, usageMetadata } = chunk as any;
+        
+        if (text) {
+             fullText += text;
+             setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === modelMessageId ? { 
+                      ...msg, 
+                      text: fullText,
+                      groundingMetadata: groundingMetadata || msg.groundingMetadata 
+                  } : msg
+                )
+             );
+        }
+
+        if (usageMetadata) {
+             // Correct the estimates with actual values from service calculation (including RAG overhead)
+             const totalTurnTokens = usageMetadata.totalTokens;
+             // Update the model message with its output count
+             setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === modelMessageId ? { ...msg, tokenCount: usageMetadata.outputTokens } : msg
+                )
+             );
+             // Update session total. 
+             // Note: We added estimateUserTokens earlier. Service returns total turn tokens.
+             // We need to be careful not to double count. 
+             // Best to recalc session total based on messages array, or just add the delta.
+             // Simplest: Add outputTokens now.
+             setSessionTokenCount(prev => prev + usageMetadata.outputTokens);
+        }
       }
     } catch (error) {
       console.error(error);
@@ -405,6 +442,9 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2">
+             <div className="px-3 py-1 rounded bg-[#f1f3f4] dark:bg-[#2d2e30] text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hidden md:block" title="Estimated Total Tokens">
+                 {sessionTokenCount.toLocaleString()} tokens
+             </div>
              <button onClick={() => setFocusMode(!focusMode)} className="p-2 text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30] rounded-full" title="Focus Mode">
                  <span className="material-symbols-outlined">fullscreen</span>
              </button>
@@ -433,13 +473,20 @@ export default function App() {
             <div className="flex flex-col space-y-8 pb-40">
               {messages.map((msg) => (
                 <div key={msg.id} className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2 mb-1">
-                      {msg.role === Role.MODEL ? (
-                           <span className="material-symbols-outlined text-[#1a73e8] dark:text-[#8ab4f8] text-lg">auto_awesome</span>
-                      ) : (
-                           <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg">person</span>
+                  <div className="flex items-center gap-2 mb-1 justify-between">
+                      <div className="flex items-center gap-2">
+                          {msg.role === Role.MODEL ? (
+                              <span className="material-symbols-outlined text-[#1a73e8] dark:text-[#8ab4f8] text-lg">auto_awesome</span>
+                          ) : (
+                              <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg">person</span>
+                          )}
+                          <span className="text-sm font-medium text-[#444746] dark:text-[#c4c7c5] uppercase">{msg.role}</span>
+                      </div>
+                      {msg.tokenCount && (
+                          <span className="text-[10px] text-[#5f6368] dark:text-[#5e5e5e] font-mono">
+                              {msg.tokenCount} tok
+                          </span>
                       )}
-                      <span className="text-sm font-medium text-[#444746] dark:text-[#c4c7c5] uppercase">{msg.role}</span>
                   </div>
 
                   <div className={`pl-7 ${msg.role === Role.USER ? 'text-[#1f1f1f] dark:text-[#e3e3e3]' : 'text-[#3c4043] dark:text-[#c4c7c5]'}`}>
@@ -535,6 +582,7 @@ export default function App() {
         config={appConfig}
         setConfig={setAppConfig}
         isCollapsed={focusMode || settingsCollapsed}
+        geminiService={geminiService}
       />
     </div>
   );

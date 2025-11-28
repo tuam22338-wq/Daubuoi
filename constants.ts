@@ -2,6 +2,7 @@ import { ModelConfig, SafetyThreshold, AppConfig, WriterMode } from './types';
 
 export const MAX_FILE_SIZE_MB = 100;
 export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+export const EMBEDDING_MODEL_ID = 'text-embedding-004';
 
 export const AVAILABLE_MODELS: ModelConfig[] = [
   {
@@ -54,6 +55,7 @@ export const DEFAULT_GENERATION_CONFIG = {
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
+  apiKeys: [], // Initialize empty
   model: AVAILABLE_MODELS[2].id, 
   systemInstruction: NOVELIST_SYSTEM_INSTRUCTION,
   generationConfig: DEFAULT_GENERATION_CONFIG,
