@@ -8,6 +8,7 @@ interface SettingsPanelProps {
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   isCollapsed: boolean;
   geminiService: GeminiService;
+  onClose?: () => void;
 }
 
 // Declare process to avoid TypeScript errors during build
@@ -23,7 +24,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   config,
   setConfig,
   isCollapsed,
-  geminiService
+  geminiService,
+  onClose
 }) => {
   const [advancedOpen, setAdvancedOpen] = useState(true);
   const [safetyOpen, setSafetyOpen] = useState(false);
@@ -160,7 +162,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   };
 
   return (
-    <div className="w-[360px] flex-shrink-0 bg-white dark:bg-[#1e1f20] border-l border-[#dadce0] dark:border-[#444746] h-full overflow-y-auto hidden md:flex flex-col text-[#1f1f1f] dark:text-[#e3e3e3] font-roboto text-[13px]">
+    <div className={`
+        bg-white dark:bg-[#1e1f20] border-l border-[#dadce0] dark:border-[#444746] 
+        text-[#1f1f1f] dark:text-[#e3e3e3] font-roboto text-[13px]
+        md:w-[360px] md:relative md:flex flex-col h-full overflow-y-auto flex-shrink-0
+        fixed inset-0 z-50 w-full animate-in slide-in-from-right duration-200
+        ${isCollapsed ? 'hidden' : 'flex'}
+    `}>
+      {/* Mobile Header */}
+      <div className="md:hidden flex items-center justify-between p-4 border-b border-[#dadce0] dark:border-[#444746] bg-white dark:bg-[#1e1f20]">
+          <h2 className="font-medium text-lg">Settings</h2>
+          <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700">
+              <span className="material-symbols-outlined">close</span>
+          </button>
+      </div>
       
       {/* API Key Input */}
       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746] bg-blue-50 dark:bg-[#1a2e47]/30">

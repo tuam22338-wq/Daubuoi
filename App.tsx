@@ -4,7 +4,7 @@ import { createGeminiService, estimateTokens, estimateImageTokens } from './serv
 import { DEFAULT_APP_CONFIG, MAX_FILE_SIZE_BYTES } from './constants';
 import SettingsPanel from './components/SettingsPanel';
 import MarkdownView from './components/MarkdownView';
-import { saveSession, getSessions, deleteSessionFromDB } from './db';
+import { saveSession, getSessions, deleteSessionFromDB, saveAppConfig, getAppConfig } from './db';
 
 const geminiService = createGeminiService();
 
@@ -18,9 +18,16 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [settingsCollapsed, setSettingsCollapsed] = useState(false);
+  
+  // Settings Visibility
+  const [settingsCollapsed, setSettingsCollapsed] = useState(true); 
+  
   const [focusMode, setFocusMode] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Config State
   const [appConfig, setAppConfig] = useState<AppConfig>(DEFAULT_APP_CONFIG);
+  const [configLoaded, setConfigLoaded] = useState(false);
 
   // Persistence State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -45,7 +52,47 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // --- Persistence Logic (IndexedDB) ---
+  // --- Config Persistence (IndexedDB) ---
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const savedConfig = await getAppConfig();
+        if (savedConfig) {
+             // Merge with default to ensure new keys exist if schema changes
+             setAppConfig(prev => ({
+                 ...DEFAULT_APP_CONFIG,
+                 ...savedConfig,
+                 generationConfig: {
+                     ...DEFAULT_APP_CONFIG.generationConfig,
+                     ...(savedConfig.generationConfig || {})
+                 }
+             }));
+        } else {
+            // First time load, open settings on desktop
+            if (window.innerWidth > 768) {
+                setSettingsCollapsed(false);
+            }
+        }
+      } catch (e) {
+        console.error("Failed to load app config from DB", e);
+      } finally {
+        setConfigLoaded(true);
+      }
+    };
+    loadConfig();
+  }, []);
+
+  useEffect(() => {
+    if (!configLoaded) return;
+    
+    // Debounce save to avoid slamming DB
+    const timeout = setTimeout(() => {
+        saveAppConfig(appConfig).catch(e => console.error("Failed to save config to DB", e));
+    }, 1000);
+    return () => clearTimeout(timeout);
+  }, [appConfig, configLoaded]);
+
+  // --- Persistence Logic (Sessions) ---
 
   // Load sessions from DB on mount
   useEffect(() => {
@@ -111,6 +158,7 @@ export default function App() {
       setSessionTokenCount(0);
       turnCountRef.current = 0;
       geminiService.startChat(appConfig); 
+      setMobileMenuOpen(false); // Close menu on mobile
       return newId;
   }, [appConfig]);
 
@@ -122,6 +170,7 @@ export default function App() {
           setAttachments([]);
           setSessionTokenCount(session.totalTokens || 0);
           geminiService.startChat(appConfig); 
+          setMobileMenuOpen(false); // Close menu on mobile
       }
   };
 
@@ -145,8 +194,10 @@ export default function App() {
   }, [appConfig]);
 
   useEffect(() => {
-    initChat();
-  }, [initChat]);
+    if (configLoaded) {
+        initChat();
+    }
+  }, [initChat, configLoaded]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -281,25 +332,11 @@ export default function App() {
   };
 
   const handleRetry = async (messageId: string) => {
-      // Find the user message before this error
       const errorMsgIndex = messages.findIndex(m => m.id === messageId);
       if (errorMsgIndex <= 0) return;
 
       const userMsg = messages[errorMsgIndex - 1];
       if (userMsg.role !== Role.USER) return;
-
-      // Remove the error message and the user message from state to "replay"
-      setMessages(prev => prev.filter((_, i) => i < errorMsgIndex));
-      
-      // Re-send
-      // We need to restore attachments if any? Ideally yes.
-      // For now, simpler retry: just call handleSendMessage with text. 
-      // Attachments are tricky to restore from processed state back to File objects.
-      // So we will just warn user or try to re-use prompt.
-      
-      // Better approach: Just delete the error message and call send with the user message text.
-      // But we need to handle the state updates.
-      // Simplest: Remove the error message, put the text back in input (or just re-trigger).
       
       setMessages(prev => prev.filter(m => m.id !== messageId));
       handleSendMessage(userMsg.text); 
@@ -389,84 +426,111 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] font-sans transition-colors duration-200">
-      {/* Sidebar - Prompts/History */}
+    <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] font-sans transition-colors duration-200 overflow-hidden">
+      
+      {/* Sidebar - Prompts/History (Responsive: Overlay on mobile) */}
       {!focusMode && (
-          <div className="w-[260px] bg-[#f0f4f9] dark:bg-[#1e1f20] flex flex-col py-3 border-r border-[#dadce0] dark:border-[#444746] flex-shrink-0 hidden lg:flex">
-             <div className="px-4 mb-4">
-                 <button 
-                    onClick={() => createNewSession()}
-                    className="flex items-center gap-3 bg-[#dde3ea] dark:bg-[#2d2e30] hover:bg-[#c4c7c5] dark:hover:bg-[#444746] w-full py-3 px-4 rounded-xl transition-colors text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3]"
-                 >
-                     <span className="material-symbols-outlined text-xl">add</span>
-                     Create new
-                 </button>
-             </div>
-             <div className="flex-1 overflow-y-auto px-2 space-y-1">
-                 <div className="px-3 py-2 text-xs font-medium text-[#5f6368] dark:text-[#9aa0a6]">Recent Chats</div>
-                 {sessions.map(session => (
-                     <div 
-                        key={session.id}
-                        onClick={() => loadSession(session.id)}
-                        className={`mx-2 px-3 py-2 rounded-full text-sm truncate cursor-pointer flex justify-between items-center group
-                            ${currentSessionId === session.id 
-                                ? 'bg-[#d3e3fd] dark:bg-[#004a77] text-[#001d35] dark:text-[#c2e7ff]' 
-                                : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e1e3e1] dark:hover:bg-[#2d2e30]'}`}
+          <>
+            {/* Backdrop for mobile */}
+            {mobileMenuOpen && (
+                <div 
+                    className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+                    onClick={() => setMobileMenuOpen(false)}
+                />
+            )}
+            
+            <div className={`
+                w-[260px] bg-[#f0f4f9] dark:bg-[#1e1f20] flex flex-col py-3 border-r border-[#dadce0] dark:border-[#444746] flex-shrink-0 
+                transition-transform duration-300 ease-in-out z-50
+                fixed inset-y-0 left-0 lg:static lg:transform-none
+                ${mobileMenuOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full lg:translate-x-0'}
+            `}>
+                <div className="px-4 mb-4 flex justify-between items-center lg:block">
+                     <button 
+                        onClick={() => createNewSession()}
+                        className="flex items-center gap-3 bg-[#dde3ea] dark:bg-[#2d2e30] hover:bg-[#c4c7c5] dark:hover:bg-[#444746] w-full py-3 px-4 rounded-xl transition-colors text-sm font-medium text-[#1f1f1f] dark:text-[#e3e3e3]"
                      >
-                         <span className="truncate flex-1">{session.title}</span>
-                         <button 
-                            onClick={(e) => deleteSession(e, session.id)}
-                            className="opacity-0 group-hover:opacity-100 text-[#5f6368] hover:text-[#d93025] dark:hover:text-[#f28b82] ml-2"
+                         <span className="material-symbols-outlined text-xl">add</span>
+                         Create new
+                     </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto px-2 space-y-1">
+                     <div className="px-3 py-2 text-xs font-medium text-[#5f6368] dark:text-[#9aa0a6]">Recent Chats</div>
+                     {sessions.map(session => (
+                         <div 
+                            key={session.id}
+                            onClick={() => loadSession(session.id)}
+                            className={`mx-2 px-3 py-2 rounded-full text-sm truncate cursor-pointer flex justify-between items-center group
+                                ${currentSessionId === session.id 
+                                    ? 'bg-[#d3e3fd] dark:bg-[#004a77] text-[#001d35] dark:text-[#c2e7ff]' 
+                                    : 'text-[#444746] dark:text-[#c4c7c5] hover:bg-[#e1e3e1] dark:hover:bg-[#2d2e30]'}`}
                          >
-                            <span className="material-symbols-outlined text-[16px]">delete</span>
-                         </button>
-                     </div>
-                 ))}
-                 {sessions.length === 0 && (
-                     <div className="px-5 text-xs text-[#5f6368] dark:text-[#80868b] italic">No saved chats</div>
-                 )}
-             </div>
-             
-             {/* Bottom Sidebar Action */}
-             <div className="px-4 py-2 border-t border-[#dadce0] dark:border-[#444746]">
-                 <button 
-                    onClick={() => setIsDarkMode(!isDarkMode)}
-                    className="flex items-center gap-2 text-sm text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-[#e3e3e3] py-2 w-full"
-                 >
-                     <span className="material-symbols-outlined text-lg">
-                         {isDarkMode ? 'light_mode' : 'dark_mode'}
-                     </span>
-                     {isDarkMode ? 'Light Mode' : 'Dark Mode'}
-                 </button>
-             </div>
-          </div>
+                             <span className="truncate flex-1">{session.title}</span>
+                             <button 
+                                onClick={(e) => deleteSession(e, session.id)}
+                                className="opacity-0 group-hover:opacity-100 text-[#5f6368] hover:text-[#d93025] dark:hover:text-[#f28b82] ml-2"
+                             >
+                                <span className="material-symbols-outlined text-[16px]">delete</span>
+                             </button>
+                         </div>
+                     ))}
+                     {sessions.length === 0 && (
+                         <div className="px-5 text-xs text-[#5f6368] dark:text-[#80868b] italic">No saved chats</div>
+                     )}
+                </div>
+                
+                {/* Bottom Sidebar Action */}
+                <div className="px-4 py-2 border-t border-[#dadce0] dark:border-[#444746]">
+                     <button 
+                        onClick={() => setIsDarkMode(!isDarkMode)}
+                        className="flex items-center gap-2 text-sm text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1f1f1f] dark:hover:text-[#e3e3e3] py-2 w-full"
+                     >
+                         <span className="material-symbols-outlined text-lg">
+                             {isDarkMode ? 'light_mode' : 'dark_mode'}
+                         </span>
+                         {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+                     </button>
+                </div>
+            </div>
+          </>
       )}
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col h-full relative max-w-full bg-white dark:bg-[#131314]">
+      <div className="flex-1 flex flex-col h-full relative max-w-full bg-white dark:bg-[#131314] overflow-hidden">
         {/* Header */}
-        <header className="h-14 border-b border-[#dadce0] dark:border-[#444746] flex items-center justify-between px-4 bg-white dark:bg-[#131314] z-10">
-          <div className="flex items-center space-x-3">
+        <header className="h-14 border-b border-[#dadce0] dark:border-[#444746] flex items-center justify-between px-4 bg-white dark:bg-[#131314] z-20 flex-shrink-0">
+          <div className="flex items-center space-x-3 truncate">
+            {/* Hamburger for Mobile */}
+            {!focusMode && (
+                <button 
+                    className="lg:hidden p-1 text-[#5f6368] dark:text-[#c4c7c5]"
+                    onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                >
+                    <span className="material-symbols-outlined">menu</span>
+                </button>
+            )}
+            
             {focusMode && (
                 <button onClick={() => setFocusMode(false)} className="text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8]">
                     <span className="material-symbols-outlined">fullscreen_exit</span>
                 </button>
             )}
-            <h1 className="text-lg font-medium text-[#444746] dark:text-[#e3e3e3]">
+            <h1 className="text-lg font-medium text-[#444746] dark:text-[#e3e3e3] truncate max-w-[150px] md:max-w-xs">
                 {currentSessionId ? sessions.find(s => s.id === currentSessionId)?.title : 'Untitled Prompt'}
             </h1>
             {isSummarizing && (
-                <span className="text-xs text-[#1a73e8] dark:text-[#8ab4f8] flex items-center gap-1 ml-4 animate-pulse">
+                <span className="text-xs text-[#1a73e8] dark:text-[#8ab4f8] flex items-center gap-1 ml-2 animate-pulse hidden sm:flex">
                     <span className="material-symbols-outlined text-[14px]">psychology</span>
                     Updating memory...
                 </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 md:gap-2">
              <div className="px-3 py-1 rounded bg-[#f1f3f4] dark:bg-[#2d2e30] text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hidden md:block" title="Estimated Total Tokens">
                  {sessionTokenCount.toLocaleString()} tokens
              </div>
-             <button onClick={() => setFocusMode(!focusMode)} className="p-2 text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30] rounded-full" title="Focus Mode">
+             <button onClick={() => setFocusMode(!focusMode)} className="p-2 text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30] rounded-full hidden sm:block" title="Focus Mode">
                  <span className="material-symbols-outlined">fullscreen</span>
              </button>
              <button 
@@ -476,8 +540,12 @@ export default function App() {
              >
                 <span className="material-symbols-outlined">tune</span>
              </button>
-             <button className="bg-[#1a73e8] dark:bg-[#0b57d0] text-white px-4 py-1.5 rounded-full text-sm font-medium hover:bg-[#155db1] dark:hover:bg-[#0842a0]">
-                 Run
+             <button 
+                onClick={() => handleSendMessage()}
+                className="bg-[#1a73e8] dark:bg-[#0b57d0] text-white px-3 md:px-4 py-1.5 rounded-full text-sm font-medium hover:bg-[#155db1] dark:hover:bg-[#0842a0] flex-shrink-0"
+             >
+                 <span className="hidden md:inline">Run</span>
+                 <span className="material-symbols-outlined text-sm md:hidden">play_arrow</span>
              </button>
           </div>
         </header>
@@ -485,7 +553,7 @@ export default function App() {
         {/* Messages */}
         <div className={`flex-1 overflow-y-auto px-4 ${focusMode ? 'md:px-48' : 'md:px-16'} py-6 scroll-smooth bg-white dark:bg-[#131314]`}>
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center select-none">
+            <div className="h-full flex flex-col items-center justify-center select-none p-4 text-center">
               <div className="w-16 h-16 bg-gradient-to-br from-[#4285f4] to-[#9b72cb] rounded-xl mb-4 opacity-20"></div>
               <p className="text-2xl text-[#444746] dark:text-[#e3e3e3] font-normal mb-2">Hello there</p>
               <p className="text-[#444746] dark:text-[#c4c7c5] text-lg">How can I help you today?</p>
@@ -537,7 +605,7 @@ export default function App() {
                            </button>
                        </div>
                     ) : (
-                       <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif text-[16px]' : ''} />
+                       <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif text-[15px] md:text-[16px]' : 'text-[15px]'} />
                     )}
                   </div>
                 </div>
@@ -548,14 +616,14 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        <div className={`absolute bottom-0 left-0 right-0 bg-white dark:bg-[#131314] p-4 z-20 ${focusMode ? 'md:px-40' : 'md:px-16'}`}>
+        <div className={`absolute bottom-0 left-0 right-0 bg-white dark:bg-[#131314] p-2 md:p-4 z-20 ${focusMode ? 'md:px-40' : 'md:px-16'}`}>
            <div className="max-w-4xl mx-auto">
-                <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
+                <div className="flex gap-2 mb-2 overflow-x-auto pb-1 no-scrollbar">
                     {['Expand', 'Describe', 'Dialogue', 'Rewrite'].map(action => (
                         <button 
                             key={action}
                             onClick={() => handleQuickAction(action.toLowerCase())} 
-                            className="px-3 py-1 bg-[#f1f3f4] dark:bg-[#2d2e30] text-[#444746] dark:text-[#e3e3e3] rounded-lg text-xs font-medium hover:bg-[#e3e3e3] dark:hover:bg-[#444746] border border-transparent"
+                            className="px-3 py-1 bg-[#f1f3f4] dark:bg-[#2d2e30] text-[#444746] dark:text-[#e3e3e3] rounded-lg text-xs font-medium hover:bg-[#e3e3e3] dark:hover:bg-[#444746] border border-transparent whitespace-nowrap"
                         >
                             {action}
                         </button>
@@ -607,7 +675,7 @@ export default function App() {
                         </button>
                     </div>
                 </div>
-                <div className="text-center mt-2 flex justify-center gap-4 text-xs text-[#5f6368] dark:text-[#80868b]">
+                <div className="text-center mt-2 flex justify-center gap-4 text-[10px] md:text-xs text-[#5f6368] dark:text-[#80868b]">
                     <span>{messages.length} turns</span>
                     <span>{input.length} chars</span>
                 </div>
@@ -615,12 +683,13 @@ export default function App() {
         </div>
       </div>
 
-      {/* Settings Panel */}
+      {/* Settings Panel (Responsive Prop) */}
       <SettingsPanel 
         config={appConfig}
         setConfig={setAppConfig}
         isCollapsed={focusMode || settingsCollapsed}
         geminiService={geminiService}
+        onClose={() => setSettingsCollapsed(true)}
       />
     </div>
   );
