@@ -40,8 +40,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [processingStatus, setProcessingStatus] = useState('');
   const [newStopSequence, setNewStopSequence] = useState('');
   const knowledgeInputRef = useRef<HTMLInputElement>(null);
-  
-  // No longer fetching browser voices, we use GEMINI_VOICES
 
   if (isCollapsed) return null;
 
@@ -151,6 +149,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       }
   };
 
+  const toggleKnowledgeFile = (id: string, currentStatus: boolean | undefined) => {
+      setConfig(prev => ({
+          ...prev,
+          knowledgeFiles: prev.knowledgeFiles.map(f => 
+              f.id === id ? { ...f, isActive: currentStatus === false } : f
+          )
+      }));
+  };
+
   const addStopSequence = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && newStopSequence.trim()) {
       e.preventDefault();
@@ -240,17 +247,33 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${interfaceOpen ? 'rotate-180' : ''}`}>expand_more</span>
             </div>
             {interfaceOpen && (
-                <div className="mt-4">
-                    <div className="flex justify-between mb-1">
-                        <span className="text-[#5f6368] dark:text-[#c4c7c5]">Thu phóng (Zoom)</span>
-                        <span className="text-[#3c4043] dark:text-[#e3e3e3]">{Math.round((config.uiScale || 1) * 100)}%</span>
+                <div className="mt-4 space-y-4">
+                    {/* Zoom UI */}
+                    <div>
+                        <div className="flex justify-between mb-1">
+                            <span className="text-[#5f6368] dark:text-[#c4c7c5]">Thu phóng (Zoom)</span>
+                            <span className="text-[#3c4043] dark:text-[#e3e3e3]">{Math.round((config.uiScale || 1) * 100)}%</span>
+                        </div>
+                        <input
+                            type="range" min="0.75" max="1.5" step="0.05"
+                            value={config.uiScale || 1}
+                            onChange={(e) => handleChange('uiScale', parseFloat(e.target.value))}
+                            className="w-full h-1 bg-[#dadce0] dark:bg-[#444746] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
+                        />
                     </div>
-                    <input
-                        type="range" min="0.75" max="1.5" step="0.05"
-                        value={config.uiScale || 1}
-                        onChange={(e) => handleChange('uiScale', parseFloat(e.target.value))}
-                        className="w-full h-1 bg-[#dadce0] dark:bg-[#444746] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
-                    />
+                    {/* Font Size */}
+                    <div>
+                        <div className="flex justify-between mb-1">
+                            <span className="text-[#5f6368] dark:text-[#c4c7c5]">Cỡ chữ (Font Size)</span>
+                            <span className="text-[#3c4043] dark:text-[#e3e3e3]">{config.fontSize || 15}px</span>
+                        </div>
+                        <input
+                            type="range" min="12" max="20" step="1"
+                            value={config.fontSize || 15}
+                            onChange={(e) => handleChange('fontSize', parseInt(e.target.value))}
+                            className="w-full h-1 bg-[#dadce0] dark:bg-[#444746] rounded-lg appearance-none cursor-pointer accent-[#1a73e8]"
+                        />
+                    </div>
                 </div>
             )}
        </div>
@@ -394,6 +417,20 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
             {advancedOpen && (
                 <div className="space-y-4 mt-2 pl-1">
+                    {/* Google Grounding */}
+                    <div className="flex items-center justify-between">
+                         <span className="text-[#5f6368] dark:text-[#c4c7c5]">Google Search Grounding</span>
+                         <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={config.enableGoogleSearch} 
+                                onChange={(e) => handleChange('enableGoogleSearch', e.target.checked)}
+                                className="sr-only peer" 
+                            />
+                            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                         </label>
+                    </div>
+
                      <div>
                         <div className="flex justify-between mb-1">
                             <span className="text-[#5f6368] dark:text-[#c4c7c5]">Top K</span>
@@ -419,7 +456,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         />
                     </div>
 
-                    {/* Target Word Count (Forced) moved here */}
+                    {/* Target Word Count */}
                     <div className="p-2 bg-blue-50 dark:bg-[#1e2a3b] rounded border border-blue-100 dark:border-[#0b57d0]">
                         <div className="flex justify-between mb-1">
                             <span className="text-blue-800 dark:text-blue-300 font-medium" title="Ép AI viết đủ số lượng từ này">Độ dài tối thiểu (Minimum Length)</span>
@@ -500,15 +537,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <div className="space-y-1 max-h-40 overflow-y-auto">
                     {config.knowledgeFiles.map(file => (
                         <div key={file.id} className="flex items-center justify-between bg-[#f8f9fa] dark:bg-[#2d2e30] p-2 rounded border border-[#dadce0] dark:border-[#5e5e5e] group hover:bg-[#f1f3f4] dark:hover:bg-[#3c4043]">
-                            <div className="flex items-center gap-2 overflow-hidden">
+                            <div className="flex items-center gap-2 overflow-hidden flex-1">
+                                <input 
+                                    type="checkbox"
+                                    checked={file.isActive !== false}
+                                    onChange={() => toggleKnowledgeFile(file.id, file.isActive)}
+                                    className="cursor-pointer"
+                                />
                                 <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-sm">
                                     {file.chunks && file.chunks.length > 0 ? 'psychology' : 'description'}
                                 </span>
-                                <div className="flex flex-col truncate max-w-[160px]">
-                                    <span className="text-xs text-[#3c4043] dark:text-[#e3e3e3] truncate">{file.name}</span>
+                                <div className="flex flex-col truncate max-w-[140px]">
+                                    <span className={`text-xs text-[#3c4043] dark:text-[#e3e3e3] truncate ${file.isActive === false ? 'opacity-50 line-through' : ''}`}>
+                                        {file.name}
+                                    </span>
                                     {file.chunks && (
                                         <span className="text-[9px] text-green-600 dark:text-green-400">
-                                            Vectorized ({file.chunks.length} chunks)
+                                            {file.chunks.length} chunks
                                         </span>
                                     )}
                                 </div>

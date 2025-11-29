@@ -28,6 +28,9 @@ export default function App() {
   // Edit Mode State
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  
+  // Thinking UI State
+  const [expandedThoughts, setExpandedThoughts] = useState<Set<string>>(new Set());
 
   // Settings Visibility
   const [settingsCollapsed, setSettingsCollapsed] = useState(true); 
@@ -188,7 +191,6 @@ export default function App() {
       try {
         const savedConfig = await getAppConfig();
         if (savedConfig) {
-             // Merge with default to ensure new keys exist if schema changes
              setAppConfig(prev => ({
                  ...DEFAULT_APP_CONFIG,
                  ...savedConfig,
@@ -198,7 +200,6 @@ export default function App() {
                  }
              }));
         } else {
-            // First time load, open settings on desktop
             if (window.innerWidth > 768) {
                 setSettingsCollapsed(false);
             }
@@ -215,7 +216,6 @@ export default function App() {
   useEffect(() => {
     if (!configLoaded) return;
     
-    // Debounce save to avoid slamming DB
     const timeout = setTimeout(() => {
         saveAppConfig(appConfig).catch(e => console.error("Failed to save config to DB", e));
     }, 1000);
@@ -223,8 +223,6 @@ export default function App() {
   }, [appConfig, configLoaded]);
 
   // --- Persistence Logic (Sessions) ---
-
-  // Load sessions from DB on mount
   useEffect(() => {
     const loadSessions = async () => {
         try {
@@ -237,7 +235,6 @@ export default function App() {
     loadSessions();
   }, []);
 
-  // Save current session to DB whenever messages update
   useEffect(() => {
       const saveCurrent = async () => {
           if (currentSessionId && messages.length > 0) {
@@ -256,7 +253,6 @@ export default function App() {
 
               await saveSession(sessionToSave);
               
-              // Update local state list to reflect title change or timestamp
               setSessions(prev => {
                   const exists = prev.find(s => s.id === currentSessionId);
                   if (exists) {
@@ -266,7 +262,6 @@ export default function App() {
               });
           }
       };
-      // Debounce slightly to avoid slamming DB
       const timeout = setTimeout(saveCurrent, 500);
       return () => clearTimeout(timeout);
   }, [messages, currentSessionId, sessionTokenCount]);
@@ -280,7 +275,6 @@ export default function App() {
           updatedAt: Date.now(),
           totalTokens: 0
       };
-      // Optimistically add to list
       setSessions(prev => [newSession, ...prev]);
       setCurrentSessionId(newId);
       setMessages([]);
@@ -288,8 +282,8 @@ export default function App() {
       setSessionTokenCount(0);
       turnCountRef.current = 0;
       geminiService.startChat(appConfig); 
-      setMobileMenuOpen(false); // Close menu on mobile
-      isUserAtBottomRef.current = true; // Reset scroll state
+      setMobileMenuOpen(false); 
+      isUserAtBottomRef.current = true;
       return newId;
   }, [appConfig]);
 
@@ -301,8 +295,8 @@ export default function App() {
           setAttachments([]);
           setSessionTokenCount(session.totalTokens || 0);
           geminiService.startChat(appConfig); 
-          setMobileMenuOpen(false); // Close menu on mobile
-          isUserAtBottomRef.current = true; // Reset scroll state
+          setMobileMenuOpen(false); 
+          isUserAtBottomRef.current = true; 
       }
   };
 
@@ -331,22 +325,18 @@ export default function App() {
     }
   }, [initChat, configLoaded]);
 
-  // --- Scroll Logic ---
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Check user scroll position to toggle auto-scroll
   const handleScroll = () => {
       if (chatContainerRef.current) {
           const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-          // If within 50px of the bottom, we consider the user "at the bottom"
           const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
           isUserAtBottomRef.current = isAtBottom;
       }
   };
 
-  // Only auto-scroll if the user was already at the bottom
   useEffect(() => {
     if (isUserAtBottomRef.current) {
         scrollToBottom();
@@ -360,7 +350,6 @@ export default function App() {
     }
   }, [input]);
 
-  // Memory Extraction Logic
   useEffect(() => {
       const runExtraction = async () => {
           if (messages.length > 0 && turnCountRef.current > 0 && turnCountRef.current % MEMORY_UPDATE_INTERVAL === 0) {
@@ -394,7 +383,6 @@ export default function App() {
     const textToSend = overrideText || input;
     if ((!textToSend.trim() && attachments.length === 0) || isLoading) return;
 
-    // Force scroll to bottom when user explicitly sends a message
     isUserAtBottomRef.current = true;
     setTimeout(scrollToBottom, 0);
 
@@ -402,7 +390,6 @@ export default function App() {
         createNewSession();
     }
 
-    // Estimate user tokens instantly for UI
     const estimatedUserTokens = estimateTokens(textToSend) + (attachments.length * estimateImageTokens());
     
     const userMessage: ChatMessage = {
@@ -413,6 +400,8 @@ export default function App() {
       timestamp: Date.now(),
       tokenCount: estimatedUserTokens
     };
+
+    const previousMessages = messages; 
 
     setMessages(prev => [...prev, userMessage]);
     setSessionTokenCount(prev => prev + estimatedUserTokens);
@@ -436,14 +425,14 @@ export default function App() {
     setMessages(prev => [...prev, modelMessage]);
 
     try {
-      const stream = geminiService.sendMessageStream(userMessage.text, filesToSend);
+      const stream = geminiService.sendMessageStream(userMessage.text, filesToSend, previousMessages);
       let fullText = '';
       
       for await (const chunk of stream) {
         const { text, groundingMetadata, usageMetadata } = chunk as any;
         
-        if (text) {
-             fullText += text;
+        if (text || groundingMetadata) {
+             if (text) fullText += text;
              setMessages(prev => 
                 prev.map(msg => 
                   msg.id === modelMessageId ? { 
@@ -456,7 +445,6 @@ export default function App() {
         }
 
         if (usageMetadata) {
-             const totalTurnTokens = usageMetadata.totalTokens;
              setMessages(prev => 
                 prev.map(msg => 
                   msg.id === modelMessageId ? { ...msg, tokenCount: usageMetadata.outputTokens } : msg
@@ -493,20 +481,15 @@ export default function App() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Check if on mobile (rough heuristic) or specifically use checking window width
     const isMobile = window.innerWidth < 768;
-
     if (e.key === 'Enter') {
         if (!e.shiftKey && !isMobile) {
-            // Desktop: Enter sends
             e.preventDefault();
             handleSendMessage();
         } 
-        // Mobile: Enter does default (newline), Shift+Enter (if avail) does newline
     }
   };
 
-  // --- Edit & Branch Logic ---
   const handleEditClick = (msg: ChatMessage) => {
       setEditingMessageId(msg.id);
       setEditText(msg.text);
@@ -519,13 +502,10 @@ export default function App() {
 
   const handleEditSubmit = async (originalMsgId: string) => {
       if (!editText.trim()) return;
-      
       const index = messages.findIndex(m => m.id === originalMsgId);
       if (index === -1) return;
-
       const previousMessages = messages.slice(0, index);
       setMessages(previousMessages);
-      
       setEditingMessageId(null);
       handleSendMessage(editText);
   };
@@ -578,6 +558,15 @@ export default function App() {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
+  const toggleThoughts = (msgId: string) => {
+    setExpandedThoughts(prev => {
+        const next = new Set(prev);
+        if (next.has(msgId)) next.delete(msgId);
+        else next.add(msgId);
+        return next;
+    });
+  };
+
   const renderAttachment = (att: Attachment, index: number, isPreview = false) => {
     const isImage = att.mimeType.startsWith('image/');
     return (
@@ -606,18 +595,20 @@ export default function App() {
     );
   };
 
-  // UI Scale Wrapper Style
   const appStyle = {
       zoom: appConfig.uiScale || 1
+  } as React.CSSProperties;
+
+  const contentFontStyle = {
+      fontSize: `${appConfig.fontSize || 15}px`,
+      lineHeight: '1.6'
   } as React.CSSProperties;
 
   return (
     <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] font-sans transition-colors duration-200 overflow-hidden" style={appStyle}>
       
-      {/* Sidebar - Prompts/History (Responsive: Overlay on mobile) */}
       {!focusMode && (
           <>
-            {/* Backdrop for mobile */}
             {mobileMenuOpen && (
                 <div 
                     className="fixed inset-0 bg-black/50 z-40 lg:hidden"
@@ -641,7 +632,6 @@ export default function App() {
                      </button>
                 </div>
                 
-                {/* Mobile Specific Controls */}
                 <div className="lg:hidden px-4 mb-2 flex gap-2">
                     {deferredPrompt && (
                         <button 
@@ -683,12 +673,8 @@ export default function App() {
                              </button>
                          </div>
                      ))}
-                     {sessions.length === 0 && (
-                         <div className="px-5 text-xs text-[#5f6368] dark:text-[#80868b] italic">Chưa có đoạn chat nào</div>
-                     )}
                 </div>
                 
-                {/* Bottom Sidebar Action */}
                 <div className="px-4 py-2 border-t border-[#dadce0] dark:border-[#444746]">
                      <button 
                         onClick={() => setIsDarkMode(!isDarkMode)}
@@ -704,12 +690,9 @@ export default function App() {
           </>
       )}
 
-      {/* Main Chat Area */}
       <div className="flex-1 flex flex-col h-full relative max-w-full bg-white dark:bg-[#131314] overflow-hidden">
-        {/* Header */}
         <header className="h-14 border-b border-[#dadce0] dark:border-[#444746] flex items-center justify-between px-4 bg-white dark:bg-[#131314] z-20 flex-shrink-0">
           <div className="flex items-center space-x-3 truncate">
-            {/* Hamburger for Mobile */}
             {!focusMode && (
                 <button 
                     className="lg:hidden p-1 text-[#5f6368] dark:text-[#c4c7c5]"
@@ -758,7 +741,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* Messages */}
         <div 
           ref={chatContainerRef}
           onScroll={handleScroll}
@@ -784,31 +766,23 @@ export default function App() {
                           <span className="text-sm font-medium text-[#444746] dark:text-[#c4c7c5] uppercase">{msg.role === Role.USER ? 'BẠN' : 'AI'}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                          {msg.tokenCount && (
-                              <span className="text-[10px] text-[#5f6368] dark:text-[#5e5e5e] font-mono">
-                                  {msg.tokenCount} tok
-                              </span>
-                          )}
-                          
-                          {/* TTS Button for AI */}
+                          {/* TTS Button */}
                           {msg.role === Role.MODEL && !msg.isError && msg.text && (
                               <button 
                                 onClick={() => handleSpeak(msg.text, msg.id)}
                                 className={`text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity ${speakingMessageId === msg.id ? 'opacity-100 animate-pulse text-[#1a73e8]' : 'opacity-0 group-hover:opacity-100'}`}
-                                title={speakingMessageId === msg.id ? "Dừng đọc" : "Đọc văn bản (Gemini TTS)"}
                               >
                                   <span className="material-symbols-outlined text-[18px]">
                                       {speakingMessageId === msg.id ? 'stop_circle' : 'volume_up'}
                                   </span>
                               </button>
                           )}
-
-                          {/* Edit Button for User Messages */}
+                          
+                          {/* Edit Button */}
                           {msg.role === Role.USER && !isLoading && editingMessageId !== msg.id && (
                               <button 
                                 onClick={() => handleEditClick(msg)}
                                 className="opacity-0 group-hover:opacity-100 text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity"
-                                title="Chỉnh sửa & Chạy lại"
                               >
                                   <span className="material-symbols-outlined text-[16px]">edit</span>
                               </button>
@@ -816,29 +790,19 @@ export default function App() {
                       </div>
                   </div>
 
-                  <div className={`pl-7 ${msg.role === Role.USER ? 'text-[#1f1f1f] dark:text-[#e3e3e3]' : 'text-[#3c4043] dark:text-[#c4c7c5]'}`}>
-                    {/* Render Edit Mode or Normal Mode */}
+                  <div className={`pl-7 ${msg.role === Role.USER ? 'text-[#1f1f1f] dark:text-[#e3e3e3]' : 'text-[#3c4043] dark:text-[#c4c7c5]'}`} style={contentFontStyle}>
                     {editingMessageId === msg.id ? (
                         <div className="bg-[#f0f4f9] dark:bg-[#1e1f20] p-3 rounded-lg border border-[#dadce0] dark:border-[#444746]">
                             <textarea
                                 value={editText}
                                 onChange={(e) => setEditText(e.target.value)}
-                                className="w-full bg-transparent border-none focus:ring-0 resize-none text-[#1f1f1f] dark:text-[#e3e3e3] text-[15px]"
+                                className="w-full bg-transparent border-none focus:ring-0 resize-none text-[#1f1f1f] dark:text-[#e3e3e3]"
+                                style={{ fontSize: `${appConfig.fontSize || 15}px` }}
                                 rows={3}
                             />
                             <div className="flex justify-end gap-2 mt-2">
-                                <button 
-                                    onClick={handleEditCancel}
-                                    className="px-3 py-1 text-xs font-medium text-[#5f6368] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] rounded"
-                                >
-                                    Hủy
-                                </button>
-                                <button 
-                                    onClick={() => handleEditSubmit(msg.id)}
-                                    className="px-3 py-1 text-xs font-medium bg-[#1a73e8] text-white rounded hover:bg-[#155db1]"
-                                >
-                                    Lưu & Chạy
-                                </button>
+                                <button onClick={handleEditCancel} className="px-3 py-1 text-xs font-medium text-[#5f6368] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] rounded">Hủy</button>
+                                <button onClick={() => handleEditSubmit(msg.id)} className="px-3 py-1 text-xs font-medium bg-[#1a73e8] text-white rounded hover:bg-[#155db1]">Lưu & Chạy</button>
                             </div>
                         </div>
                     ) : (
@@ -849,27 +813,66 @@ export default function App() {
                             </div>
                             )}
                             
-                            {msg.text === '' && !msg.isError ? (
-                            <div className="h-6 w-24 bg-[#f1f3f4] dark:bg-[#2d2e30] rounded shimmer"></div>
-                            ) : msg.isError ? (
-                            <div className="flex flex-col gap-2 items-start">
-                                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-300 text-sm">
-                                    <span className="flex items-center gap-2 font-medium">
-                                        <span className="material-symbols-outlined">error</span>
-                                        Tạo nội dung thất bại
-                                    </span>
-                                    <p className="mt-1 opacity-90">{msg.text.replace('System Error: ', '')}</p>
+                            {/* Thinking Block */}
+                            {msg.thought && (
+                                <div className="mb-2">
+                                    <button 
+                                        onClick={() => toggleThoughts(msg.id)}
+                                        className="flex items-center gap-1 text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8]"
+                                    >
+                                        <span className="material-symbols-outlined text-[14px]">psychology</span>
+                                        {expandedThoughts.has(msg.id) ? 'Ẩn suy nghĩ' : 'Xem quá trình suy luận'}
+                                        <span className="material-symbols-outlined text-[14px]">{expandedThoughts.has(msg.id) ? 'expand_less' : 'expand_more'}</span>
+                                    </button>
+                                    {expandedThoughts.has(msg.id) && (
+                                        <div className="mt-1 p-3 bg-[#f8f9fa] dark:bg-[#1e1f20] border-l-2 border-[#dadce0] dark:border-[#5e5e5e] text-xs font-mono text-[#5f6368] dark:text-[#c4c7c5] whitespace-pre-wrap">
+                                            {msg.thought}
+                                        </div>
+                                    )}
                                 </div>
-                                <button 
-                                        onClick={() => handleRetry(msg.id)}
-                                        className="flex items-center gap-1 text-xs text-[#1a73e8] dark:text-[#8ab4f8] hover:underline"
-                                >
-                                    <span className="material-symbols-outlined text-sm">refresh</span>
-                                    Thử lại
-                                </button>
-                            </div>
+                            )}
+
+                            {msg.text === '' && !msg.isError ? (
+                                <div className="h-6 w-24 bg-[#f1f3f4] dark:bg-[#2d2e30] rounded shimmer"></div>
+                            ) : msg.isError ? (
+                                <div className="flex flex-col gap-2 items-start">
+                                    <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-300 text-sm">
+                                        <span className="flex items-center gap-2 font-medium">
+                                            <span className="material-symbols-outlined">error</span>
+                                            Tạo nội dung thất bại
+                                        </span>
+                                        <p className="mt-1 opacity-90">{msg.text.replace('System Error: ', '')}</p>
+                                    </div>
+                                    <button onClick={() => handleRetry(msg.id)} className="flex items-center gap-1 text-xs text-[#1a73e8] dark:text-[#8ab4f8] hover:underline">
+                                        <span className="material-symbols-outlined text-sm">refresh</span>
+                                        Thử lại
+                                    </button>
+                                </div>
                             ) : (
-                            <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif text-[15px] md:text-[16px]' : 'text-[15px]'} />
+                                <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif' : ''} />
+                            )}
+
+                            {/* Grounding Sources */}
+                            {msg.groundingMetadata && msg.groundingMetadata.groundingChunks && msg.groundingMetadata.groundingChunks.length > 0 && (
+                                <div className="mt-3 pt-2 border-t border-[#f1f3f4] dark:border-[#444746]">
+                                    <p className="text-[11px] font-medium text-[#5f6368] dark:text-[#9aa0a6] uppercase mb-1 flex items-center gap-1">
+                                        <span className="material-symbols-outlined text-[14px]">public</span>
+                                        Nguồn tham khảo (Google Search)
+                                    </p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {msg.groundingMetadata.groundingChunks.map((chunk, i) => {
+                                            if (chunk.web) {
+                                                return (
+                                                    <a key={i} href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 bg-[#f1f3f4] dark:bg-[#2d2e30] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] px-2 py-1 rounded text-xs text-[#1a73e8] dark:text-[#8ab4f8] border border-[#dadce0] dark:border-[#5e5e5e] transition-colors max-w-[200px] truncate">
+                                                        <span className="material-symbols-outlined text-[12px]">link</span>
+                                                        <span className="truncate">{chunk.web.title || chunk.web.uri}</span>
+                                                    </a>
+                                                );
+                                            }
+                                            return null;
+                                        })}
+                                    </div>
+                                </div>
                             )}
                         </>
                     )}
@@ -881,7 +884,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Input Area */}
         <div className={`absolute bottom-0 left-0 right-0 bg-white dark:bg-[#131314] p-2 md:p-4 z-20 ${focusMode ? 'md:px-40' : 'md:px-16'}`}>
            <div className="max-w-4xl mx-auto">
                 <div className="flex gap-2 mb-2 overflow-x-auto pb-1 no-scrollbar">
@@ -924,8 +926,8 @@ export default function App() {
                             onKeyDown={handleKeyDown}
                             placeholder="Nhập nội dung..."
                             rows={1}
-                            className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-2 max-h-64 text-[#1f1f1f] dark:text-[#e3e3e3] placeholder-[#5f6368] dark:placeholder-[#80868b] text-[16px]"
-                            style={{ minHeight: '48px' }}
+                            className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-2 max-h-64 text-[#1f1f1f] dark:text-[#e3e3e3] placeholder-[#5f6368] dark:placeholder-[#80868b]"
+                            style={{ minHeight: '48px', fontSize: `${appConfig.fontSize || 16}px` }}
                         />
 
                         <button
@@ -949,7 +951,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Settings Panel (Responsive Prop) */}
       <SettingsPanel 
         config={appConfig}
         setConfig={setAppConfig}

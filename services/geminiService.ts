@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Chat, GenerateContentResponse, Content, Modality } from "@google/genai";
-import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk } from "../types";
+import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage } from "../types";
 import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID } from "../constants";
 
 // Declare process to avoid TypeScript errors during build
@@ -75,6 +75,9 @@ export class GeminiService {
   private apiKeys: string[] = [];
   private currentKeyIndex = 0;
   private currentChatConfig: any = {};
+  
+  // Cache for TTS to prevent re-fetching and speed up playback
+  private ttsCache = new Map<string, ArrayBuffer>();
 
   constructor() {
     // Initialized without keys, will receive them in startChat
@@ -104,6 +107,12 @@ export class GeminiService {
   }
 
   public async generateSpeech(text: string, voiceName: string): Promise<ArrayBuffer | null> {
+    const cacheKey = `${voiceName}:${text}`;
+    if (this.ttsCache.has(cacheKey)) {
+        console.log("Serving TTS from cache");
+        return this.ttsCache.get(cacheKey)!;
+    }
+
     const client = this.getClient();
     if (!client) throw new Error("API Key required for TTS");
 
@@ -130,6 +139,10 @@ export class GeminiService {
         for (let i = 0; i < len; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
+        
+        // Cache the result
+        this.ttsCache.set(cacheKey, bytes.buffer);
+
         return bytes.buffer;
 
     } catch (e) {
@@ -157,12 +170,16 @@ export class GeminiService {
           content: fileObj.content,
           chunks: vectorChunks,
           type: fileObj.type,
-          size: fileObj.size
+          size: fileObj.size,
+          isActive: true // Default to active
       };
   }
 
   private async getRelevantContext(query: string, files: KnowledgeFile[]): Promise<string> {
-      const vectorizedFiles = files.filter(f => f.chunks && f.chunks.length > 0);
+      // Filter out inactive files
+      const activeFiles = files.filter(f => f.isActive !== false);
+      const vectorizedFiles = activeFiles.filter(f => f.chunks && f.chunks.length > 0);
+      
       if (vectorizedFiles.length === 0) return "";
 
       const queryVector = await this.embedText(query);
@@ -245,7 +262,6 @@ ${c.content}
     }
     
     this.currentKeyIndex = 0;
-    this.initializeSession();
   }
 
   private initializeSession(history: Content[] = []) {
@@ -279,7 +295,10 @@ ${c.content}
     if (thinkingBudget > 0) config.thinkingConfig = { thinkingBudget };
 
     const tools = [];
-    if (appConfig.enableGoogleSearch) tools.push({ googleSearch: {} });
+    if (appConfig.enableGoogleSearch) {
+        tools.push({ googleSearch: {} });
+    }
+    
     if (tools.length > 0) config.tools = tools;
 
     const threshold = appConfig.safetyThreshold || 'BLOCK_NONE';
@@ -312,23 +331,40 @@ ${c.content}
       return false;
   }
 
-  public async *sendMessageStream(text: string, files: File[]) {
+  public async *sendMessageStream(text: string, files: File[], previousHistory: ChatMessage[]) {
     if (!this.currentConfig) throw new Error("Chat session not initialized. Please ensure API Key is set.");
 
     if (this.apiKeys.length === 0) {
         throw new Error("No API Key provided. Please add one in Settings.");
     }
 
+    // --- REBUILD HISTORY (OPTIMIZED) ---
+    // Only send the last 20 messages to keep request payload light and TTFT fast.
+    // The older context is handled by "Memory" and "RAG" which are injected below.
+    const recentHistory = previousHistory
+        .filter(m => !m.isError && m.text)
+        .slice(-20); // optimization: Limit history
+
+    const sdkHistory: Content[] = recentHistory
+        .map(m => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.text }] 
+        }));
+    
+    // -------------------------------
+
     let finalPrompt = text;
     let contextParts = [];
     let inputTokens = estimateTokens(text);
 
+    // Inject Long Term Memory
     if (this.currentConfig.memories.length > 0) {
         const memoryText = this.formatMemories(this.currentConfig.memories);
         contextParts.push(`\nLONG-TERM MEMORY:\n<memory_bank>\n${memoryText}\n</memory_bank>`);
         inputTokens += estimateTokens(memoryText);
     }
 
+    // Inject Knowledge Base (RAG)
     if (this.currentConfig.knowledgeFiles.length > 0) {
         const relevantContext = await this.getRelevantContext(text, this.currentConfig.knowledgeFiles);
         if (relevantContext) {
@@ -337,6 +373,7 @@ ${c.content}
         }
     }
 
+    // Inject Length Constraints
     if (this.currentConfig.targetWordCount && this.currentConfig.targetWordCount > 500) {
         const target = this.currentConfig.targetWordCount;
         const constraintPrompt = `\n[SYSTEM MANDATE]\nGenerate approx ${target} words. Expand every detail.`;
@@ -366,9 +403,9 @@ ${c.content}
 
     while (attempt < maxAttempts) {
         try {
-            if (!this.chatSession) {
-                this.initializeSession([]);
-            }
+            // Re-initialize session with recent history for every request
+            this.initializeSession(sdkHistory);
+            
             if (!this.chatSession) throw new Error("Could not initialize chat session");
 
             const result = await this.chatSession.sendMessageStream({ message: messageInput });
@@ -378,11 +415,15 @@ ${c.content}
                 const c = chunk as GenerateContentResponse;
                 const textChunk = c.text || "";
                 fullOutputText += textChunk;
+                
+                const groundingMetadata = c.candidates?.[0]?.groundingMetadata;
 
-                if (textChunk || c.candidates?.[0]?.groundingMetadata) {
+                if (textChunk || groundingMetadata) {
                     yield {
                         text: textChunk,
-                        groundingMetadata: c.candidates?.[0]?.groundingMetadata,
+                        groundingMetadata: groundingMetadata,
+                        // If thoughts are available in parts (for some thinking models), they would be handled here
+                        // For now we rely on standard text output or metadata
                     };
                 }
             }
@@ -415,11 +456,6 @@ ${c.content}
             }
 
             if (isQuotaError && this.rotateKey()) {
-                let history: Content[] = [];
-                try {
-                    history = await this.chatSession?.getHistory() || [];
-                } catch (hErr) { console.warn("History retrieval warning", hErr); }
-                this.initializeSession(history);
                 attempt++;
             } else {
                 throw error;

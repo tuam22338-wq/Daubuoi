@@ -24,6 +24,7 @@ export interface KnowledgeFile {
   chunks?: VectorChunk[]; // Vectorized chunks for RAG
   type: string;
   size: number;
+  isActive?: boolean; // Toggle state for RAG usage
 }
 
 export interface MemoryItem {
@@ -44,11 +45,13 @@ export interface ChatMessage {
   id: string;
   role: Role;
   text: string;
+  thought?: string; // For Thinking models
   attachments?: Attachment[];
   timestamp: number;
   isError?: boolean;
   groundingMetadata?: {
     groundingChunks: GroundingChunk[];
+    searchEntryPoint?: any;
   };
   tokenCount?: number; // Estimated tokens for this message
 }
@@ -104,6 +107,7 @@ export interface AppConfig {
   writerMode: WriterMode;
   targetWordCount: number; // Force specific length
   uiScale: number; // UI Zoom level (0.8 - 1.5)
+  fontSize: number; // Font size in px (12-20)
   ttsVoice: string; // Voice URI
   ttsRate: number; // Speaking rate 0.5 - 2.0
 }
