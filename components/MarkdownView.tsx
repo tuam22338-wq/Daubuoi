@@ -1,11 +1,13 @@
+
 import React from 'react';
 
 interface MarkdownViewProps {
   content: string;
   className?: string;
+  style?: React.CSSProperties;
 }
 
-const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) => {
+const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '', style }) => {
   // A very basic formatter to preserve whitespace and handle code blocks visually
   
   const formatText = (text: string) => {
@@ -20,7 +22,7 @@ const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) 
       
       if (inCodeBlock) {
         return (
-          <div key={index} className="bg-gray-100 dark:bg-[#1e1f20] font-mono text-sm px-4 py-0.5 text-gray-800 dark:text-gray-200">
+          <div key={index} className="bg-gray-100 dark:bg-[#1e1f20] font-mono text-[0.9em] px-4 py-0.5 text-gray-800 dark:text-gray-200 overflow-x-auto">
             {line}
           </div>
         );
@@ -42,7 +44,10 @@ const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '' }) 
   };
 
   return (
-    <div className={`markdown-body text-gray-800 dark:text-gray-300 text-[15px] leading-relaxed ${className}`}>
+    <div 
+        className={`markdown-body text-gray-800 dark:text-gray-300 leading-relaxed ${className}`}
+        style={style}
+    >
       {formatText(content)}
     </div>
   );

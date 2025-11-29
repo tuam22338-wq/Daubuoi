@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Chat, GenerateContentResponse, Content, Modality } from "@google/genai";
-import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage } from "../types";
-import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID } from "../constants";
+import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage, ModelConfig } from "../types";
+import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID, LOGIC_ANALYSIS_PROMPT, AVAILABLE_MODELS } from "../constants";
 
 // Declare process to avoid TypeScript errors during build
 declare const process: any;
@@ -278,13 +278,28 @@ ${c.content}
     let actualModel = appConfig.model;
     let thinkingBudget = appConfig.generationConfig.thinkingBudget || 0;
 
+    // Check if current model supports thinking
+    const modelDef = AVAILABLE_MODELS.find(m => m.id === appConfig.model);
+    const isThinkingModel = modelDef?.isThinking || false;
+
     if (appConfig.model === 'gemini-2.5-flash-thinking') {
        actualModel = 'gemini-2.5-flash';
+       // Native thinking
        if (thinkingBudget === 0) thinkingBudget = 1024;
+    } else if (isThinkingModel) {
+        // Enable budget for Pro models if they support it or to prepare config
+        if (thinkingBudget === 0 && appConfig.model.includes('thinking')) thinkingBudget = 1024;
+    }
+
+    // Prepare System Instruction
+    // If logic analysis is required (Simulated Thinking), prepend it
+    let systemInstruction = appConfig.systemInstruction;
+    if (isThinkingModel) {
+        systemInstruction = `${LOGIC_ANALYSIS_PROMPT}\n\n${systemInstruction}`;
     }
 
     const config: any = {
-      systemInstruction: appConfig.systemInstruction,
+      systemInstruction: systemInstruction,
       temperature: appConfig.generationConfig.temperature,
       topP: appConfig.generationConfig.topP,
       topK: appConfig.generationConfig.topK,
@@ -339,11 +354,9 @@ ${c.content}
     }
 
     // --- REBUILD HISTORY (OPTIMIZED) ---
-    // Only send the last 20 messages to keep request payload light and TTFT fast.
-    // The older context is handled by "Memory" and "RAG" which are injected below.
     const recentHistory = previousHistory
         .filter(m => !m.isError && m.text)
-        .slice(-20); // optimization: Limit history
+        .slice(-20); 
 
     const sdkHistory: Content[] = recentHistory
         .map(m => ({
@@ -410,25 +423,67 @@ ${c.content}
 
             const result = await this.chatSession.sendMessageStream({ message: messageInput });
             let fullOutputText = "";
+            let fullThoughtText = "";
+            let buffer = "";
+            let inThoughtBlock = false;
 
             for await (const chunk of result) {
                 const c = chunk as GenerateContentResponse;
                 const textChunk = c.text || "";
-                fullOutputText += textChunk;
-                
                 const groundingMetadata = c.candidates?.[0]?.groundingMetadata;
 
-                if (textChunk || groundingMetadata) {
+                // Streaming XML Parser for <thought>...</thought>
+                buffer += textChunk;
+                let processedChunkText = "";
+                let processedChunkThought = "";
+
+                // Very basic streaming parser loop
+                while (buffer.length > 0) {
+                    if (!inThoughtBlock) {
+                        const startTagIndex = buffer.indexOf("<thought>");
+                        if (startTagIndex !== -1) {
+                            // Yield content before tag as text
+                            processedChunkText += buffer.slice(0, startTagIndex);
+                            buffer = buffer.slice(startTagIndex + 9); // Remove <thought>
+                            inThoughtBlock = true;
+                        } else {
+                            // If no tag, yield all buffer if it doesn't look like a partial tag
+                            // (Simplified: just yield all to avoid hanging)
+                            processedChunkText += buffer;
+                            buffer = "";
+                        }
+                    } else {
+                        const endTagIndex = buffer.indexOf("</thought>");
+                        if (endTagIndex !== -1) {
+                            // Yield content before tag as thought
+                            processedChunkThought += buffer.slice(0, endTagIndex);
+                            buffer = buffer.slice(endTagIndex + 10); // Remove </thought>
+                            inThoughtBlock = false;
+                        } else {
+                            // Yield all as thought
+                            processedChunkThought += buffer;
+                            buffer = "";
+                        }
+                    }
+                }
+
+                if (processedChunkThought) {
+                    fullThoughtText += processedChunkThought;
+                }
+                if (processedChunkText) {
+                    fullOutputText += processedChunkText;
+                }
+
+                if (processedChunkText || processedChunkThought || groundingMetadata) {
                     yield {
-                        text: textChunk,
+                        text: processedChunkText,
+                        thought: fullThoughtText, // Send aggregated thought so UI can render full thought block
                         groundingMetadata: groundingMetadata,
-                        // If thoughts are available in parts (for some thinking models), they would be handled here
-                        // For now we rely on standard text output or metadata
                     };
                 }
             }
             
-            const outputTokens = estimateTokens(fullOutputText);
+            const outputTokens = estimateTokens(fullOutputText + fullThoughtText);
             const totalTurnTokens = inputTokens + outputTokens;
 
             yield {
@@ -455,8 +510,20 @@ ${c.content}
                 throw new Error("Content blocked by Safety Settings. Try lowering sensitivity in Settings.");
             }
 
-            if (isQuotaError && this.rotateKey()) {
-                attempt++;
+            if (isQuotaError) {
+                // Fallback to Flash if Pro fails and user might be on free tier
+                if (this.currentConfig.model.includes('pro')) {
+                     console.log("Pro model failed, falling back to Flash");
+                     this.currentConfig.model = 'gemini-2.5-flash';
+                     // Don't count as attempt failure, just retry with new model immediately
+                     continue; 
+                }
+
+                if (this.rotateKey()) {
+                    attempt++;
+                } else {
+                    throw error;
+                }
             } else {
                 throw error;
             }

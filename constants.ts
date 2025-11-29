@@ -19,7 +19,7 @@ export const AVAILABLE_MODELS: ModelConfig[] = [
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
     description: 'Nhanh, tiết kiệm, cửa sổ ngữ cảnh 1M',
-    isThinking: true
+    isThinking: false
   },
   {
     id: 'gemini-2.5-flash-thinking', 
@@ -57,6 +57,15 @@ NGUYÊN TẮC CỐT LÕI:
    - **Nhất quán**: Tuân thủ tuyệt đối các thông tin trong <story_bible_fragment> và <memory_bank> nếu có.
 
 Hãy luôn giữ thái độ hỗ trợ, tôn trọng và sáng tạo.`;
+
+export const LOGIC_ANALYSIS_PROMPT = `
+[INSTRUCTION]: Before generating your response, you MUST perform a deep logic analysis. 
+Identify potential plot holes, character inconsistencies, or structural weaknesses in the request.
+Plan your response structure.
+Output this analysis inside <thought>...</thought> XML tags. 
+The analysis should be concise and analytical.
+After the </thought> tag, provide your final response as normal.
+`;
 
 export const MEMORY_EXTRACTION_PROMPT = `Analyze the recent conversation provided below.
 Extract key facts, significant plot events, character developments, or world-building details.

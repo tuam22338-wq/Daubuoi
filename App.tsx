@@ -595,17 +595,15 @@ export default function App() {
     );
   };
 
-  const appStyle = {
-      zoom: appConfig.uiScale || 1
-  } as React.CSSProperties;
-
+  // Logic to calculate final font size based on settings and "UI Scale"
+  const calculatedFontSize = (appConfig.fontSize || 15) * (appConfig.uiScale || 1);
   const contentFontStyle = {
-      fontSize: `${appConfig.fontSize || 15}px`,
+      fontSize: `${calculatedFontSize}px`,
       lineHeight: '1.6'
   } as React.CSSProperties;
 
   return (
-    <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] font-sans transition-colors duration-200 overflow-hidden" style={appStyle}>
+    <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-[#1f1f1f] dark:text-[#e3e3e3] font-sans transition-colors duration-200 overflow-hidden">
       
       {!focusMode && (
           <>
@@ -797,7 +795,7 @@ export default function App() {
                                 value={editText}
                                 onChange={(e) => setEditText(e.target.value)}
                                 className="w-full bg-transparent border-none focus:ring-0 resize-none text-[#1f1f1f] dark:text-[#e3e3e3]"
-                                style={{ fontSize: `${appConfig.fontSize || 15}px` }}
+                                style={{ fontSize: `${calculatedFontSize}px` }}
                                 rows={3}
                             />
                             <div className="flex justify-end gap-2 mt-2">
@@ -849,7 +847,11 @@ export default function App() {
                                     </button>
                                 </div>
                             ) : (
-                                <MarkdownView content={msg.text} className={msg.role === Role.MODEL ? 'font-serif' : ''} />
+                                <MarkdownView 
+                                    content={msg.text} 
+                                    className={msg.role === Role.MODEL ? 'font-serif' : ''} 
+                                    style={contentFontStyle}
+                                />
                             )}
 
                             {/* Grounding Sources */}
@@ -927,7 +929,7 @@ export default function App() {
                             placeholder="Nhập nội dung..."
                             rows={1}
                             className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-2 max-h-64 text-[#1f1f1f] dark:text-[#e3e3e3] placeholder-[#5f6368] dark:placeholder-[#80868b]"
-                            style={{ minHeight: '48px', fontSize: `${appConfig.fontSize || 16}px` }}
+                            style={{ minHeight: '48px', ...contentFontStyle }}
                         />
 
                         <button
