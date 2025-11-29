@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Role, ChatMessage, Attachment, AppConfig, MemoryItem, ChatSession, CharacterProfile } from './types';
+import { Role, ChatMessage, Attachment, AppConfig, MemoryItem, ChatSession, CharacterProfile, PlotBranch } from './types';
 import { createGeminiService, estimateTokens, estimateImageTokens } from './services/geminiService';
 import { DEFAULT_APP_CONFIG, MAX_FILE_SIZE_BYTES } from './constants';
 import SettingsPanel from './components/SettingsPanel';
@@ -31,6 +31,10 @@ export default function App() {
   
   // Thinking UI State
   const [expandedThoughts, setExpandedThoughts] = useState<Set<string>>(new Set());
+
+  // Branching UI State
+  const [plotBranches, setPlotBranches] = useState<PlotBranch[]>([]);
+  const [isBranching, setIsBranching] = useState(false);
 
   // Settings Visibility
   const [settingsCollapsed, setSettingsCollapsed] = useState(true); 
@@ -476,6 +480,7 @@ export default function App() {
     
     if (!overrideText) setInput('');
     setAttachments([]);
+    setPlotBranches([]); // Clear previous branches
     setIsLoading(true);
     
     turnCountRef.current += 1;
@@ -579,11 +584,31 @@ export default function App() {
       handleSendMessage(editText);
   };
 
+  const handleBranching = async () => {
+      if (messages.length === 0) return;
+      setIsBranching(true);
+      try {
+          const context = messages.slice(-5).map(m => `${m.role.toUpperCase()}: ${m.text}`).join('\n');
+          const branches = await geminiService.generatePlotBranches(context);
+          setPlotBranches(branches);
+      } catch (e) {
+          alert("Lỗi khi tạo nhánh cốt truyện.");
+      } finally {
+          setIsBranching(false);
+      }
+  };
+
   const handleQuickAction = (action: string) => {
-      if (!input.trim()) {
+      if (!input.trim() && action !== 'branching') {
           alert("Vui lòng nhập nội dung trước.");
           return;
       }
+      
+      if (action === 'branching') {
+          handleBranching();
+          return;
+      }
+
       let prompt = "";
       switch (action) {
           case 'expand': prompt = `Mở rộng ý này thành một cảnh đầy đủ với các chi tiết cảm giác:\n\n${input}`; break;
@@ -1019,6 +1044,30 @@ export default function App() {
                     </div>
                     </div>
                 ))}
+                
+                {/* BRANCHING UI */}
+                {plotBranches.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                        {plotBranches.map((branch, idx) => (
+                            <button
+                                key={idx}
+                                onClick={() => {
+                                    handleSendMessage(branch.prompt);
+                                    setPlotBranches([]);
+                                }}
+                                className="text-left p-3 rounded-xl border border-purple-200 dark:border-purple-900 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors group"
+                            >
+                                <div className="text-xs font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider mb-1">
+                                    {branch.label}
+                                </div>
+                                <div className="text-sm text-gray-700 dark:text-gray-300 line-clamp-3">
+                                    {branch.description}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                )}
+                
                 <div ref={messagesEndRef} />
                 </div>
             )}
@@ -1037,6 +1086,18 @@ export default function App() {
                             {action}
                         </button>
                     ))}
+                    <button 
+                        onClick={() => handleQuickAction('branching')}
+                        disabled={isBranching || messages.length === 0}
+                        className="px-3 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-lg text-xs font-medium hover:bg-purple-200 dark:hover:bg-purple-900/50 border border-transparent whitespace-nowrap flex items-center gap-1"
+                    >
+                         {isBranching ? (
+                             <span className="material-symbols-outlined text-[14px] animate-spin">refresh</span>
+                         ) : (
+                             <span className="material-symbols-outlined text-[14px]">alt_route</span>
+                         )}
+                         Gợi ý hướng đi
+                    </button>
                 </div>
 
                 <div className="bg-[#f0f4f9] dark:bg-[#1e1f20] rounded-2xl border border-transparent focus-within:bg-white dark:focus-within:bg-[#2d2e30] focus-within:border-[#dadce0] dark:focus-within:border-[#5e5e5e] focus-within:shadow-sm transition-all">

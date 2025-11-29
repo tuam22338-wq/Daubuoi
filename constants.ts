@@ -67,6 +67,36 @@ The analysis should be concise and analytical.
 After the </thought> tag, provide your final response as normal.
 `;
 
+export const CRITIC_PROMPT = `
+[CRITIC AGENT ACTIVATED]
+Review the draft above. Identify:
+1. Clichés or overused phrases.
+2. Instances of "Telling" instead of "Showing".
+3. Weak verbs or passive voice.
+4. Inconsistencies with character traits.
+
+[REFINEMENT INSTRUCTION]
+Rewrite the draft completely to address these issues. 
+- Elevate the prose quality. 
+- Ensure deep emotional resonance. 
+- REMOVE any banned words if found.
+Output ONLY the final polished story.
+`;
+
+export const BRANCHING_PROMPT = `Based on the current story context, brainstorm 3 distinct plot directions for what could happen next.
+1. **Action/Conflict**: A direction focused on tension, fight, or argument.
+2. **Character/Emotion**: A direction focused on internal reflection or relationship building.
+3. **Twist/Unexpected**: A direction that introduces a surprise element.
+
+Format the output strictly as JSON in the following format (do not use Markdown code blocks, just raw JSON):
+[
+  { "label": "Hành động", "description": "Short description of the event...", "prompt": "Viết tiếp cảnh: [Description]" },
+  { "label": "Cảm xúc", "description": "Short description...", "prompt": "Viết tiếp cảnh: [Description]" },
+  { "label": "Bất ngờ", "description": "Short description...", "prompt": "Viết tiếp cảnh: [Description]" }
+]`;
+
+export const DEFAULT_BANNED_WORDS = `shivered down his spine, released a breath he didn't know he was holding, emerald orbs, cerulean eyes, piercing gaze, smirked, chuckled darkly, testament to, a mixture of`;
+
 export const STYLE_ANALYSIS_PROMPT = `Analyze the following writing sample. Extract the "Writing DNA" into a concise style guide.
 Focus on:
 1. Sentence Structure (Length, complexity, rhythm).
@@ -125,7 +155,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   writingStyle: "", // Default empty style
   enableThinking: true, // Enable thinking by default for supported models
   enableLogicAnalysis: false,
-  ttsProvider: 'gemini'
+  ttsProvider: 'gemini',
+  enableAutoRefine: false, // Default off
+  bannedWords: DEFAULT_BANNED_WORDS
 };
 
 export const SAFETY_SETTINGS_OPTIONS = [

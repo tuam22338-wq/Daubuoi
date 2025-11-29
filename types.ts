@@ -104,6 +104,12 @@ export enum WriterMode {
   CUSTOM = 'custom'
 }
 
+export interface PlotBranch {
+    label: string; // e.g., "Twist", "Action"
+    description: string; // "A sudden explosion happens..."
+    prompt: string; // The actual prompt to send
+}
+
 export interface AppConfig {
   apiKeys: string[]; // List of API keys for rotation
   model: string;
@@ -128,4 +134,8 @@ export interface AppConfig {
 
   // TTS Provider
   ttsProvider: 'gemini' | 'browser';
+
+  // Quality Control
+  enableAutoRefine: boolean; // Critic Loop
+  bannedWords: string; // Negative constraints
 }

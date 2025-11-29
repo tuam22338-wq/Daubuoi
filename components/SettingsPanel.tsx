@@ -37,6 +37,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [ttsOpen, setTtsOpen] = useState(false);
   const [styleOpen, setStyleOpen] = useState(true);
   const [thinkingOpen, setThinkingOpen] = useState(true);
+  const [qualityOpen, setQualityOpen] = useState(true);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
@@ -329,6 +330,49 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                             />
                         </div>
                     )}
+                </div>
+            )}
+       </div>
+
+       {/* Quality Control (Auto-Refine) */}
+       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746] bg-green-50 dark:bg-[#003300]/30">
+           <div 
+                className="flex justify-between items-center cursor-pointer py-1"
+                onClick={() => setQualityOpen(!qualityOpen)}
+            >
+                <h3 className="font-medium text-green-800 dark:text-green-300">Chất lượng (Quality Control)</h3>
+                <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${qualityOpen ? 'rotate-180' : ''}`}>expand_more</span>
+            </div>
+            {qualityOpen && (
+                <div className="mt-4 space-y-4">
+                    {/* Auto Refine Toggle */}
+                    <div className="flex items-center justify-between">
+                         <div className="flex flex-col">
+                            <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Tự động viết nháp rồi sửa lại">Chế độ Tự biên tập (Critic)</span>
+                            <span className="text-[10px] text-gray-500">Viết chậm hơn nhưng hay hơn</span>
+                         </div>
+                         <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={config.enableAutoRefine} 
+                                onChange={(e) => handleChange('enableAutoRefine', e.target.checked)}
+                                className="sr-only peer" 
+                            />
+                            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:bg-green-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                         </label>
+                    </div>
+
+                    {/* Banned Words */}
+                    <div>
+                         <label className="block text-[#5f6368] dark:text-[#c4c7c5] mb-1">Từ cấm (Negative Constraints)</label>
+                         <p className="text-[10px] text-[#5f6368] mb-1">Các từ/cụm từ AI không được phép dùng (cách nhau bởi dấu phẩy).</p>
+                         <textarea
+                            value={config.bannedWords}
+                            onChange={(e) => handleChange('bannedWords', e.target.value)}
+                            placeholder="shivered, smirked, ..."
+                            className="w-full bg-white dark:bg-[#2d2e30] border border-[#dadce0] dark:border-[#5e5e5e] rounded p-2 text-xs focus:ring-1 focus:ring-green-600 font-mono h-20 resize-y text-[#3c4043] dark:text-[#e3e3e3]"
+                         />
+                    </div>
                 </div>
             )}
        </div>

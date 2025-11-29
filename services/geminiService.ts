@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Chat, GenerateContentResponse, Content, Modality } from "@google/genai";
-import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage, ModelConfig, CharacterProfile } from "../types";
-import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID, LOGIC_ANALYSIS_PROMPT, AVAILABLE_MODELS, STYLE_ANALYSIS_PROMPT, CHARACTER_EXTRACTION_PROMPT } from "../constants";
+import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage, ModelConfig, CharacterProfile, PlotBranch } from "../types";
+import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID, LOGIC_ANALYSIS_PROMPT, AVAILABLE_MODELS, STYLE_ANALYSIS_PROMPT, CHARACTER_EXTRACTION_PROMPT, CRITIC_PROMPT, BRANCHING_PROMPT } from "../constants";
 
 // Declare process to avoid TypeScript errors during build
 declare const process: any;
@@ -334,6 +334,27 @@ Status: ${p.currentStatus}
       }
   }
 
+  public async generatePlotBranches(context: string): Promise<PlotBranch[]> {
+    try {
+        const client = this.getClient();
+        if (!client) return [];
+        const response = await client.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `${BRANCHING_PROMPT}\n\nCONTEXT:\n${context}`
+        });
+        
+        const text = response.text || "";
+        const jsonMatch = text.match(/\[.*\]/s);
+        if (jsonMatch) {
+            return JSON.parse(jsonMatch[0]) as PlotBranch[];
+        }
+        return [];
+    } catch (e) {
+        console.error("Branching failed", e);
+        return [];
+    }
+  }
+
   public startChat(appConfig: AppConfig) {
     this.currentConfig = appConfig;
     
@@ -397,6 +418,11 @@ Status: ${p.currentStatus}
     // Only inject if native thinking is OFF OR if explicitly enabled for logic analysis
     if (appConfig.enableLogicAnalysis) {
         systemInstruction = `${LOGIC_ANALYSIS_PROMPT}\n\n${systemInstruction}`;
+    }
+
+    // Inject Banned Words (Negative Constraints)
+    if (appConfig.bannedWords && appConfig.bannedWords.trim().length > 0) {
+        systemInstruction += `\n\n[NEGATIVE CONSTRAINTS]\nYou MUST AVOID using the following words or phrases:\n${appConfig.bannedWords}`;
     }
 
     const config: any = {
@@ -528,6 +554,19 @@ Status: ${p.currentStatus}
       messageInput = parts;
     }
 
+    // --- AUTO-REFINE LOGIC (2-STEP) ---
+    const isAutoRefine = this.currentConfig.enableAutoRefine;
+    
+    // If Auto-Refine is ON, modify the first prompt to ask for a draft
+    if (isAutoRefine) {
+        const draftInstruction = `\n\n[DRAFTING PHASE]\nWrite a preliminary draft for this request. Focus on content, plot, and character actions. Ignore detailed style polish for now.`;
+        if (Array.isArray(messageInput)) {
+            messageInput.push({ text: draftInstruction });
+        } else {
+            messageInput += draftInstruction;
+        }
+    }
+
     let attempt = 0;
     const maxAttempts = Math.max(1, this.apiKeys.length);
 
@@ -538,13 +577,35 @@ Status: ${p.currentStatus}
             
             if (!this.chatSession) throw new Error("Could not initialize chat session");
 
-            const result = await this.chatSession.sendMessageStream({ message: messageInput });
+            // If Auto-Refine: 
+            // 1. Generate Draft (Non-streaming for simplicity in code structure, or silent stream)
+            // 2. Feed Draft to Critic
+            // 3. Stream Final Result
+            
+            let resultStream;
+            
+            if (isAutoRefine) {
+                // Step 1: Generate Draft (using sendMessage to wait for full response)
+                const draftResponse = await this.chatSession.sendMessage({ message: messageInput });
+                const draftText = draftResponse.response.text; 
+
+                // Step 2: Critic & Refine
+                // We send a NEW message to the SAME session to refine the previous output
+                const refinePrompt = `${CRITIC_PROMPT}\n\nORIGINAL DRAFT:\n${draftText}\n\n[INSTRUCTION]\nRewrite the draft above applying the critique. Output ONLY the final polished story.`;
+                
+                // Stream the refinement
+                resultStream = await this.chatSession.sendMessageStream({ message: refinePrompt });
+            } else {
+                // Standard single-pass generation
+                resultStream = await this.chatSession.sendMessageStream({ message: messageInput });
+            }
+
             let fullOutputText = "";
             let fullThoughtText = "";
             let buffer = "";
             let inThoughtBlock = false;
 
-            for await (const chunk of result) {
+            for await (const chunk of resultStream) {
                 const c = chunk as GenerateContentResponse;
                 const textChunk = c.text || "";
                 const groundingMetadata = c.candidates?.[0]?.groundingMetadata;
