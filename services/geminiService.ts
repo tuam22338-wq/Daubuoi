@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Chat, GenerateContentResponse, Content, Modality } from "@google/genai";
-import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage, ModelConfig } from "../types";
-import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID, LOGIC_ANALYSIS_PROMPT, AVAILABLE_MODELS } from "../constants";
+import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage, ModelConfig, CharacterProfile } from "../types";
+import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID, LOGIC_ANALYSIS_PROMPT, AVAILABLE_MODELS, STYLE_ANALYSIS_PROMPT, CHARACTER_EXTRACTION_PROMPT } from "../constants";
 
 // Declare process to avoid TypeScript errors during build
 declare const process: any;
@@ -97,7 +97,7 @@ export class GeminiService {
       try {
           const response = await client.models.embedContent({
               model: EMBEDDING_MODEL_ID,
-              contents: text 
+              contents: [{ parts: [{ text: text }] }] 
           });
           return response.embeddings?.[0]?.values || null;
       } catch (e) {
@@ -228,6 +228,16 @@ ${c.content}
       return memories.map(m => `- ${m.content}`).join('\n');
   }
 
+  private formatCharacterProfiles(profiles: CharacterProfile[]): string {
+    if (!profiles || profiles.length === 0) return "";
+    return profiles.map(p => `
+[CHARACTER]
+Name: ${p.name}
+Description: ${p.description}
+Status: ${p.currentStatus}
+`).join('\n');
+  }
+
   public async extractMemories(conversationHistory: string): Promise<string[]> {
       try {
           if (this.apiKeys.length === 0) return [];
@@ -246,6 +256,81 @@ ${c.content}
       } catch (e) {
           console.error("Memory extraction failed:", e);
           return [];
+      }
+  }
+
+  public async extractCharacterUpdates(conversationHistory: string): Promise<CharacterProfile[]> {
+    try {
+        if (this.apiKeys.length === 0) return [];
+        const flashAI = new GoogleGenAI({ apiKey: this.apiKeys[this.currentKeyIndex] });
+        const response = await flashAI.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `${CHARACTER_EXTRACTION_PROMPT}\n\nCONVERSATION:\n${conversationHistory}`
+        });
+        
+        const text = response.text;
+        if (!text || text.includes("NO_UPDATE")) return [];
+        
+        const updates: CharacterProfile[] = [];
+        const lines = text.split('\n');
+        
+        for (const line of lines) {
+            if (line.includes('|')) {
+                const parts = line.split('|').map(p => p.trim());
+                if (parts.length >= 3) {
+                    updates.push({
+                        id: Date.now() + Math.random().toString(), // Helper ID, usually we merge by name
+                        name: parts[0],
+                        description: parts[1],
+                        currentStatus: parts[2],
+                        updatedAt: Date.now()
+                    });
+                }
+            }
+        }
+        return updates;
+    } catch (e) {
+        console.error("Character extraction failed:", e);
+        return [];
+    }
+  }
+
+  public async analyzeWritingStyle(sampleText: string): Promise<string> {
+      try {
+          const client = this.getClient();
+          if (!client) throw new Error("No API Key");
+          const response = await client.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: `${STYLE_ANALYSIS_PROMPT}\n\nSAMPLE TEXT:\n${sampleText}`
+          });
+          return response.text || "";
+      } catch (e) {
+          console.error("Style analysis failed", e);
+          return "";
+      }
+  }
+
+  public async summarizeStory(currentSummary: string, newMessages: string): Promise<string> {
+      try {
+        const client = this.getClient();
+        if (!client) return currentSummary;
+        const prompt = `Update the following Story Summary with the new events provided.
+        
+        OLD SUMMARY:
+        ${currentSummary || "The story begins."}
+        
+        NEW EVENTS:
+        ${newMessages}
+        
+        Create a concise, updated narrative summary of the "Story So Far". Keep it coherent.`;
+
+        const response = await client.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt
+        });
+        return response.text || currentSummary;
+      } catch (e) {
+          return currentSummary;
       }
   }
 
@@ -282,19 +367,35 @@ ${c.content}
     const modelDef = AVAILABLE_MODELS.find(m => m.id === appConfig.model);
     const isThinkingModel = modelDef?.isThinking || false;
 
+    // Check user preference for enabling thinking
+    const isThinkingEnabled = appConfig.enableThinking !== false; // Default true if undefined
+
     if (appConfig.model === 'gemini-2.5-flash-thinking') {
        actualModel = 'gemini-2.5-flash';
        // Native thinking
        if (thinkingBudget === 0) thinkingBudget = 1024;
     } else if (isThinkingModel) {
-        // Enable budget for Pro models if they support it or to prepare config
-        if (thinkingBudget === 0 && appConfig.model.includes('thinking')) thinkingBudget = 1024;
+        // Enable budget for Pro models if they support it AND user enabled it
+        if (isThinkingEnabled) {
+             if (thinkingBudget === 0 && appConfig.model.includes('thinking')) thinkingBudget = 1024;
+        } else {
+             thinkingBudget = 0; // Disable thinking budget if toggle is off
+        }
+    } else {
+        thinkingBudget = 0;
     }
 
     // Prepare System Instruction
-    // If logic analysis is required (Simulated Thinking), prepend it
     let systemInstruction = appConfig.systemInstruction;
-    if (isThinkingModel) {
+    
+    // Inject Writing Style DNA if present
+    if (appConfig.writingStyle) {
+        systemInstruction += `\n\n[WRITING STYLE DNA]\nYou MUST adhere to this style guide:\n${appConfig.writingStyle}`;
+    }
+
+    // Logic Analysis Injection (Simulated Thinking)
+    // Only inject if native thinking is OFF OR if explicitly enabled for logic analysis
+    if (appConfig.enableLogicAnalysis) {
         systemInstruction = `${LOGIC_ANALYSIS_PROMPT}\n\n${systemInstruction}`;
     }
 
@@ -307,7 +408,10 @@ ${c.content}
       stopSequences: appConfig.generationConfig.stopSequences,
     };
 
-    if (thinkingBudget > 0) config.thinkingConfig = { thinkingBudget };
+    // Apply Thinking Config only if enabled
+    if (thinkingBudget > 0 && isThinkingEnabled) {
+        config.thinkingConfig = { thinkingBudget };
+    }
 
     const tools = [];
     if (appConfig.enableGoogleSearch) {
@@ -346,7 +450,7 @@ ${c.content}
       return false;
   }
 
-  public async *sendMessageStream(text: string, files: File[], previousHistory: ChatMessage[]) {
+  public async *sendMessageStream(text: string, files: File[], previousHistory: ChatMessage[], storySummary?: string) {
     if (!this.currentConfig) throw new Error("Chat session not initialized. Please ensure API Key is set.");
 
     if (this.apiKeys.length === 0) {
@@ -370,11 +474,24 @@ ${c.content}
     let contextParts = [];
     let inputTokens = estimateTokens(text);
 
+    // Inject Story Summary (The Story So Far)
+    if (storySummary) {
+        contextParts.push(`\nTHE STORY SO FAR:\n<narrative_context>\n${storySummary}\n</narrative_context>`);
+        inputTokens += estimateTokens(storySummary);
+    }
+
     // Inject Long Term Memory
     if (this.currentConfig.memories.length > 0) {
         const memoryText = this.formatMemories(this.currentConfig.memories);
         contextParts.push(`\nLONG-TERM MEMORY:\n<memory_bank>\n${memoryText}\n</memory_bank>`);
         inputTokens += estimateTokens(memoryText);
+    }
+    
+    // Inject Character Profiles
+    if (this.currentConfig.characterProfiles && this.currentConfig.characterProfiles.length > 0) {
+        const charText = this.formatCharacterProfiles(this.currentConfig.characterProfiles);
+        contextParts.push(`\nCHARACTER NOTES:\n<character_profiles>\n${charText}\n</character_profiles>`);
+        inputTokens += estimateTokens(charText);
     }
 
     // Inject Knowledge Base (RAG)
@@ -448,7 +565,6 @@ ${c.content}
                             inThoughtBlock = true;
                         } else {
                             // If no tag, yield all buffer if it doesn't look like a partial tag
-                            // (Simplified: just yield all to avoid hanging)
                             processedChunkText += buffer;
                             buffer = "";
                         }

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Role, ChatMessage, Attachment, AppConfig, MemoryItem, ChatSession } from './types';
+import { Role, ChatMessage, Attachment, AppConfig, MemoryItem, ChatSession, CharacterProfile } from './types';
 import { createGeminiService, estimateTokens, estimateImageTokens } from './services/geminiService';
 import { DEFAULT_APP_CONFIG, MAX_FILE_SIZE_BYTES } from './constants';
 import SettingsPanel from './components/SettingsPanel';
@@ -37,6 +37,7 @@ export default function App() {
   
   const [focusMode, setFocusMode] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showStoryContext, setShowStoryContext] = useState(false); // Toggle Story Summary Panel
 
   // Config State
   const [appConfig, setAppConfig] = useState<AppConfig>(DEFAULT_APP_CONFIG);
@@ -45,6 +46,7 @@ export default function App() {
   // Persistence State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [storySummary, setStorySummary] = useState<string>(""); // Current Story Context
 
   // Stats State
   const [sessionTokenCount, setSessionTokenCount] = useState(0);
@@ -52,6 +54,9 @@ export default function App() {
   // PWA / Fullscreen State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
+
+  // UI Tabs for Story Context
+  const [contextTab, setContextTab] = useState<'narrative' | 'characters'>('narrative');
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -77,6 +82,7 @@ export default function App() {
         audioSourceRef.current.stop();
         audioSourceRef.current = null;
     }
+    window.speechSynthesis.cancel();
     setSpeakingMessageId(null);
   };
 
@@ -88,13 +94,47 @@ export default function App() {
     }
     stopAudio();
 
-    // Check API Key first
-    if (appConfig.apiKeys.length === 0) {
-        alert("Vui lòng nhập API Key để sử dụng tính năng Text-to-Speech của Gemini.");
+    setSpeakingMessageId(id); // Set loading/active state
+
+    // Mode 1: Browser Native TTS
+    if (appConfig.ttsProvider === 'browser') {
+        try {
+            const utterance = new SpeechSynthesisUtterance(text);
+            const voices = window.speechSynthesis.getVoices();
+            // Try to find the selected voice, or default
+            const selectedVoice = voices.find(v => v.name === appConfig.ttsVoice);
+            if (selectedVoice) {
+                utterance.voice = selectedVoice;
+            }
+            
+            // Apply rate (0.5 to 2.0 typically)
+            utterance.rate = appConfig.ttsRate || 1.0;
+            
+            utterance.onend = () => {
+                setSpeakingMessageId(null);
+            };
+
+            utterance.onerror = (e) => {
+                console.error("Browser TTS Error", e);
+                setSpeakingMessageId(null);
+            };
+
+            window.speechSynthesis.speak(utterance);
+        } catch (e) {
+            console.error("Browser TTS Failed", e);
+            setSpeakingMessageId(null);
+            alert("Lỗi khi dùng giọng đọc trình duyệt.");
+        }
         return;
     }
 
-    setSpeakingMessageId(id); // Set loading/active state
+    // Mode 2: Gemini API TTS
+    // Check API Key first
+    if (appConfig.apiKeys.length === 0) {
+        alert("Vui lòng nhập API Key để sử dụng tính năng Text-to-Speech của Gemini.");
+        setSpeakingMessageId(null);
+        return;
+    }
 
     try {
         if (!audioContextRef.current) {
@@ -248,7 +288,8 @@ export default function App() {
                   title: newTitle,
                   messages: messages,
                   updatedAt: Date.now(),
-                  totalTokens: sessionTokenCount
+                  totalTokens: sessionTokenCount,
+                  storySummary: storySummary // Save the context summary
               };
 
               await saveSession(sessionToSave);
@@ -264,7 +305,7 @@ export default function App() {
       };
       const timeout = setTimeout(saveCurrent, 500);
       return () => clearTimeout(timeout);
-  }, [messages, currentSessionId, sessionTokenCount]);
+  }, [messages, currentSessionId, sessionTokenCount, storySummary]);
 
   const createNewSession = useCallback(() => {
       const newId = Date.now().toString();
@@ -273,11 +314,13 @@ export default function App() {
           title: 'Đoạn chat chưa đặt tên',
           messages: [],
           updatedAt: Date.now(),
-          totalTokens: 0
+          totalTokens: 0,
+          storySummary: ""
       };
       setSessions(prev => [newSession, ...prev]);
       setCurrentSessionId(newId);
       setMessages([]);
+      setStorySummary("");
       setAttachments([]);
       setSessionTokenCount(0);
       turnCountRef.current = 0;
@@ -292,6 +335,7 @@ export default function App() {
       if (session) {
           setCurrentSessionId(sessionId);
           setMessages(session.messages);
+          setStorySummary(session.storySummary || "");
           setAttachments([]);
           setSessionTokenCount(session.totalTokens || 0);
           geminiService.startChat(appConfig); 
@@ -356,6 +400,8 @@ export default function App() {
               setIsSummarizing(true);
               try {
                   const recentContext = messages.slice(-5).map(m => `${m.role.toUpperCase()}: ${m.text}`).join('\n');
+                  
+                  // 1. Extract Memories
                   const newFacts = await geminiService.extractMemories(recentContext);
                   if (newFacts.length > 0) {
                       const newMemories: MemoryItem[] = newFacts.map(fact => ({
@@ -369,8 +415,30 @@ export default function App() {
                           memories: [...prev.memories, ...newMemories]
                       }));
                   }
+                  
+                  // 2. Extract Character Updates
+                  const newCharacters = await geminiService.extractCharacterUpdates(recentContext);
+                  if (newCharacters.length > 0) {
+                       setAppConfig(prev => {
+                           const updatedProfiles = [...(prev.characterProfiles || [])];
+                           for (const newChar of newCharacters) {
+                               const existingIdx = updatedProfiles.findIndex(p => p.name.toLowerCase() === newChar.name.toLowerCase());
+                               if (existingIdx >= 0) {
+                                   updatedProfiles[existingIdx] = { ...updatedProfiles[existingIdx], ...newChar };
+                               } else {
+                                   updatedProfiles.push(newChar);
+                               }
+                           }
+                           return { ...prev, characterProfiles: updatedProfiles };
+                       });
+                  }
+
+                  // 3. Update Narrative Summary (The Story So Far)
+                  const updatedSummary = await geminiService.summarizeStory(storySummary, recentContext);
+                  setStorySummary(updatedSummary);
+
               } catch (e) {
-                  console.error("Memory auto-update failed", e);
+                  console.error("Auto-update failed", e);
               } finally {
                   setIsSummarizing(false);
               }
@@ -425,7 +493,8 @@ export default function App() {
     setMessages(prev => [...prev, modelMessage]);
 
     try {
-      const stream = geminiService.sendMessageStream(userMessage.text, filesToSend, previousMessages);
+      // Pass the Story Summary (Context) here
+      const stream = geminiService.sendMessageStream(userMessage.text, filesToSend, previousMessages, storySummary);
       let fullText = '';
       
       for await (const chunk of stream) {
@@ -705,9 +774,16 @@ export default function App() {
                     <span className="material-symbols-outlined">fullscreen_exit</span>
                 </button>
             )}
-            <h1 className="text-lg font-medium text-[#444746] dark:text-[#e3e3e3] truncate max-w-[150px] md:max-w-xs">
-                {currentSessionId ? sessions.find(s => s.id === currentSessionId)?.title : 'Đoạn chat mới'}
-            </h1>
+            <div className="flex flex-col">
+                <h1 className="text-lg font-medium text-[#444746] dark:text-[#e3e3e3] truncate max-w-[150px] md:max-w-xs leading-tight">
+                    {currentSessionId ? sessions.find(s => s.id === currentSessionId)?.title : 'Đoạn chat mới'}
+                </h1>
+                {appConfig.writingStyle && (
+                    <span className="text-[10px] text-purple-600 dark:text-purple-400 font-mono">
+                        Active Style: Custom DNA
+                    </span>
+                )}
+            </div>
             {isSummarizing && (
                 <span className="text-xs text-[#1a73e8] dark:text-[#8ab4f8] flex items-center gap-1 ml-2 animate-pulse hidden sm:flex">
                     <span className="material-symbols-outlined text-[14px]">psychology</span>
@@ -719,6 +795,16 @@ export default function App() {
              <div className="px-3 py-1 rounded bg-[#f1f3f4] dark:bg-[#2d2e30] text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hidden md:block" title="Tổng token ước tính">
                  {sessionTokenCount.toLocaleString()} tokens
              </div>
+             
+             {/* Story Context Toggle */}
+             <button 
+                onClick={() => setShowStoryContext(!showStoryContext)} 
+                className={`p-2 rounded-full hidden sm:block ${showStoryContext ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' : 'text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30]'}`}
+                title="Tóm tắt Cốt truyện (Context)"
+             >
+                 <span className="material-symbols-outlined">menu_book</span>
+             </button>
+
              <button onClick={() => setFocusMode(!focusMode)} className="p-2 text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30] rounded-full hidden sm:block" title="Chế độ tập trung">
                  <span className="material-symbols-outlined">fullscreen</span>
              </button>
@@ -739,151 +825,204 @@ export default function App() {
           </div>
         </header>
 
-        <div 
-          ref={chatContainerRef}
-          onScroll={handleScroll}
-          className={`flex-1 overflow-y-auto px-4 ${focusMode ? 'md:px-48' : 'md:px-16'} py-6 scroll-smooth bg-white dark:bg-[#131314]`}
-        >
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center select-none p-4 text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-[#4285f4] to-[#9b72cb] rounded-xl mb-4 opacity-20"></div>
-              <p className="text-2xl text-[#444746] dark:text-[#e3e3e3] font-normal mb-2">Xin chào</p>
-              <p className="text-[#444746] dark:text-[#c4c7c5] text-lg">Tôi có thể giúp gì cho bạn hôm nay?</p>
-            </div>
-          ) : (
-            <div className="flex flex-col space-y-8 pb-40">
-              {messages.map((msg) => (
-                <div key={msg.id} className="flex flex-col gap-1 group">
-                  <div className="flex items-center gap-2 mb-1 justify-between">
-                      <div className="flex items-center gap-2">
-                          {msg.role === Role.MODEL ? (
-                              <span className="material-symbols-outlined text-[#1a73e8] dark:text-[#8ab4f8] text-lg">auto_awesome</span>
-                          ) : (
-                              <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg">person</span>
-                          )}
-                          <span className="text-sm font-medium text-[#444746] dark:text-[#c4c7c5] uppercase">{msg.role === Role.USER ? 'BẠN' : 'AI'}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                          {/* TTS Button */}
-                          {msg.role === Role.MODEL && !msg.isError && msg.text && (
-                              <button 
-                                onClick={() => handleSpeak(msg.text, msg.id)}
-                                className={`text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity ${speakingMessageId === msg.id ? 'opacity-100 animate-pulse text-[#1a73e8]' : 'opacity-0 group-hover:opacity-100'}`}
-                              >
-                                  <span className="material-symbols-outlined text-[18px]">
-                                      {speakingMessageId === msg.id ? 'stop_circle' : 'volume_up'}
-                                  </span>
-                              </button>
-                          )}
-                          
-                          {/* Edit Button */}
-                          {msg.role === Role.USER && !isLoading && editingMessageId !== msg.id && (
-                              <button 
-                                onClick={() => handleEditClick(msg)}
-                                className="opacity-0 group-hover:opacity-100 text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity"
-                              >
-                                  <span className="material-symbols-outlined text-[16px]">edit</span>
-                              </button>
-                          )}
-                      </div>
-                  </div>
+        <div className="flex flex-1 overflow-hidden relative">
+            {/* Story Context Panel */}
+            {showStoryContext && (
+                <div className="w-80 border-r border-[#dadce0] dark:border-[#444746] bg-[#f8f9fa] dark:bg-[#1a1b1c] flex flex-col overflow-hidden animate-in slide-in-from-left duration-200 shadow-inner z-10 hidden md:flex">
+                     <div className="flex border-b border-[#dadce0] dark:border-[#444746]">
+                         <button 
+                            onClick={() => setContextTab('narrative')}
+                            className={`flex-1 py-3 text-xs font-medium text-center ${contextTab === 'narrative' ? 'text-[#1a73e8] dark:text-[#8ab4f8] border-b-2 border-[#1a73e8] dark:border-[#8ab4f8]' : 'text-[#5f6368] dark:text-[#c4c7c5]'}`}
+                         >
+                             Cốt truyện
+                         </button>
+                         <button 
+                            onClick={() => setContextTab('characters')}
+                            className={`flex-1 py-3 text-xs font-medium text-center ${contextTab === 'characters' ? 'text-[#1a73e8] dark:text-[#8ab4f8] border-b-2 border-[#1a73e8] dark:border-[#8ab4f8]' : 'text-[#5f6368] dark:text-[#c4c7c5]'}`}
+                         >
+                             Nhân vật
+                         </button>
+                     </div>
+                     
+                     <div className="flex-1 overflow-y-auto p-4">
+                         {contextTab === 'narrative' ? (
+                             <>
+                                <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5] mb-2 flex items-center gap-2 text-xs uppercase tracking-wider">
+                                    <span className="material-symbols-outlined text-sm">auto_stories</span>
+                                    Diễn biến chính
+                                </h3>
+                                <div className="text-xs text-[#5f6368] dark:text-[#9aa0a6] leading-relaxed whitespace-pre-wrap font-serif">
+                                    {storySummary || "Chưa có tóm tắt cốt truyện..."}
+                                </div>
+                             </>
+                         ) : (
+                             <div className="space-y-3">
+                                 {appConfig.characterProfiles && appConfig.characterProfiles.length > 0 ? (
+                                     appConfig.characterProfiles.map((char, idx) => (
+                                         <div key={idx} className="bg-white dark:bg-[#2d2e30] p-2 rounded border border-[#dadce0] dark:border-[#5e5e5e] text-xs">
+                                             <div className="font-bold text-[#1a73e8] dark:text-[#8ab4f8]">{char.name}</div>
+                                             <div className="text-[#3c4043] dark:text-[#e3e3e3] mt-1">{char.description}</div>
+                                             <div className="mt-2 pt-2 border-t border-dashed border-[#dadce0] dark:border-[#5e5e5e] text-[#5f6368] dark:text-[#9aa0a6] italic">
+                                                 Status: {char.currentStatus}
+                                             </div>
+                                         </div>
+                                     ))
+                                 ) : (
+                                     <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] italic text-center mt-4">Chưa có thông tin nhân vật.</p>
+                                 )}
+                             </div>
+                         )}
+                     </div>
+                </div>
+            )}
 
-                  <div className={`pl-7 ${msg.role === Role.USER ? 'text-[#1f1f1f] dark:text-[#e3e3e3]' : 'text-[#3c4043] dark:text-[#c4c7c5]'}`} style={contentFontStyle}>
-                    {editingMessageId === msg.id ? (
-                        <div className="bg-[#f0f4f9] dark:bg-[#1e1f20] p-3 rounded-lg border border-[#dadce0] dark:border-[#444746]">
-                            <textarea
-                                value={editText}
-                                onChange={(e) => setEditText(e.target.value)}
-                                className="w-full bg-transparent border-none focus:ring-0 resize-none text-[#1f1f1f] dark:text-[#e3e3e3]"
-                                style={{ fontSize: `${calculatedFontSize}px` }}
-                                rows={3}
-                            />
-                            <div className="flex justify-end gap-2 mt-2">
-                                <button onClick={handleEditCancel} className="px-3 py-1 text-xs font-medium text-[#5f6368] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] rounded">Hủy</button>
-                                <button onClick={() => handleEditSubmit(msg.id)} className="px-3 py-1 text-xs font-medium bg-[#1a73e8] text-white rounded hover:bg-[#155db1]">Lưu & Chạy</button>
-                            </div>
+            <div 
+            ref={chatContainerRef}
+            onScroll={handleScroll}
+            className={`flex-1 overflow-y-auto px-4 ${focusMode ? 'md:px-48' : 'md:px-16'} py-6 scroll-smooth bg-white dark:bg-[#131314]`}
+            >
+            {messages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center select-none p-4 text-center">
+                <div className="w-16 h-16 bg-gradient-to-br from-[#4285f4] to-[#9b72cb] rounded-xl mb-4 opacity-20"></div>
+                <p className="text-2xl text-[#444746] dark:text-[#e3e3e3] font-normal mb-2">Xin chào</p>
+                <p className="text-[#444746] dark:text-[#c4c7c5] text-lg">Tôi có thể giúp gì cho bạn hôm nay?</p>
+                </div>
+            ) : (
+                <div className="flex flex-col space-y-8 pb-40">
+                {messages.map((msg) => (
+                    <div key={msg.id} className="flex flex-col gap-1 group">
+                    <div className="flex items-center gap-2 mb-1 justify-between">
+                        <div className="flex items-center gap-2">
+                            {msg.role === Role.MODEL ? (
+                                <span className="material-symbols-outlined text-[#1a73e8] dark:text-[#8ab4f8] text-lg">auto_awesome</span>
+                            ) : (
+                                <span className="material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg">person</span>
+                            )}
+                            <span className="text-sm font-medium text-[#444746] dark:text-[#c4c7c5] uppercase">{msg.role === Role.USER ? 'BẠN' : 'AI'}</span>
                         </div>
-                    ) : (
-                        <>
-                            {msg.attachments && msg.attachments.length > 0 && (
-                            <div className="flex flex-wrap gap-2 mb-2">
-                                {msg.attachments.map((att, idx) => renderAttachment(att, idx, false))}
-                            </div>
+                        <div className="flex items-center gap-2">
+                            {/* TTS Button */}
+                            {msg.role === Role.MODEL && !msg.isError && msg.text && (
+                                <button 
+                                    onClick={() => handleSpeak(msg.text, msg.id)}
+                                    className={`text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity ${speakingMessageId === msg.id ? 'opacity-100 animate-pulse text-[#1a73e8]' : 'opacity-0 group-hover:opacity-100'}`}
+                                >
+                                    <span className="material-symbols-outlined text-[18px]">
+                                        {speakingMessageId === msg.id ? 'stop_circle' : 'volume_up'}
+                                    </span>
+                                </button>
                             )}
                             
-                            {/* Thinking Block */}
-                            {msg.thought && (
-                                <div className="mb-2">
-                                    <button 
-                                        onClick={() => toggleThoughts(msg.id)}
-                                        className="flex items-center gap-1 text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8]"
-                                    >
-                                        <span className="material-symbols-outlined text-[14px]">psychology</span>
-                                        {expandedThoughts.has(msg.id) ? 'Ẩn suy nghĩ' : 'Xem quá trình suy luận'}
-                                        <span className="material-symbols-outlined text-[14px]">{expandedThoughts.has(msg.id) ? 'expand_less' : 'expand_more'}</span>
-                                    </button>
-                                    {expandedThoughts.has(msg.id) && (
-                                        <div className="mt-1 p-3 bg-[#f8f9fa] dark:bg-[#1e1f20] border-l-2 border-[#dadce0] dark:border-[#5e5e5e] text-xs font-mono text-[#5f6368] dark:text-[#c4c7c5] whitespace-pre-wrap">
-                                            {msg.thought}
-                                        </div>
-                                    )}
-                                </div>
+                            {/* Edit Button */}
+                            {msg.role === Role.USER && !isLoading && editingMessageId !== msg.id && (
+                                <button 
+                                    onClick={() => handleEditClick(msg)}
+                                    className="opacity-0 group-hover:opacity-100 text-[#5f6368] dark:text-[#c4c7c5] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8] transition-opacity"
+                                >
+                                    <span className="material-symbols-outlined text-[16px]">edit</span>
+                                </button>
                             )}
+                        </div>
+                    </div>
 
-                            {msg.text === '' && !msg.isError ? (
-                                <div className="h-6 w-24 bg-[#f1f3f4] dark:bg-[#2d2e30] rounded shimmer"></div>
-                            ) : msg.isError ? (
-                                <div className="flex flex-col gap-2 items-start">
-                                    <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-300 text-sm">
-                                        <span className="flex items-center gap-2 font-medium">
-                                            <span className="material-symbols-outlined">error</span>
-                                            Tạo nội dung thất bại
-                                        </span>
-                                        <p className="mt-1 opacity-90">{msg.text.replace('System Error: ', '')}</p>
-                                    </div>
-                                    <button onClick={() => handleRetry(msg.id)} className="flex items-center gap-1 text-xs text-[#1a73e8] dark:text-[#8ab4f8] hover:underline">
-                                        <span className="material-symbols-outlined text-sm">refresh</span>
-                                        Thử lại
-                                    </button>
-                                </div>
-                            ) : (
-                                <MarkdownView 
-                                    content={msg.text} 
-                                    className={msg.role === Role.MODEL ? 'font-serif' : ''} 
-                                    style={contentFontStyle}
+                    <div className={`pl-7 ${msg.role === Role.USER ? 'text-[#1f1f1f] dark:text-[#e3e3e3]' : 'text-[#3c4043] dark:text-[#c4c7c5]'}`} style={contentFontStyle}>
+                        {editingMessageId === msg.id ? (
+                            <div className="bg-[#f0f4f9] dark:bg-[#1e1f20] p-3 rounded-lg border border-[#dadce0] dark:border-[#444746]">
+                                <textarea
+                                    value={editText}
+                                    onChange={(e) => setEditText(e.target.value)}
+                                    className="w-full bg-transparent border-none focus:ring-0 resize-none text-[#1f1f1f] dark:text-[#e3e3e3]"
+                                    style={{ fontSize: `${calculatedFontSize}px` }}
+                                    rows={3}
                                 />
-                            )}
-
-                            {/* Grounding Sources */}
-                            {msg.groundingMetadata && msg.groundingMetadata.groundingChunks && msg.groundingMetadata.groundingChunks.length > 0 && (
-                                <div className="mt-3 pt-2 border-t border-[#f1f3f4] dark:border-[#444746]">
-                                    <p className="text-[11px] font-medium text-[#5f6368] dark:text-[#9aa0a6] uppercase mb-1 flex items-center gap-1">
-                                        <span className="material-symbols-outlined text-[14px]">public</span>
-                                        Nguồn tham khảo (Google Search)
-                                    </p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {msg.groundingMetadata.groundingChunks.map((chunk, i) => {
-                                            if (chunk.web) {
-                                                return (
-                                                    <a key={i} href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 bg-[#f1f3f4] dark:bg-[#2d2e30] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] px-2 py-1 rounded text-xs text-[#1a73e8] dark:text-[#8ab4f8] border border-[#dadce0] dark:border-[#5e5e5e] transition-colors max-w-[200px] truncate">
-                                                        <span className="material-symbols-outlined text-[12px]">link</span>
-                                                        <span className="truncate">{chunk.web.title || chunk.web.uri}</span>
-                                                    </a>
-                                                );
-                                            }
-                                            return null;
-                                        })}
-                                    </div>
+                                <div className="flex justify-end gap-2 mt-2">
+                                    <button onClick={handleEditCancel} className="px-3 py-1 text-xs font-medium text-[#5f6368] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] rounded">Hủy</button>
+                                    <button onClick={() => handleEditSubmit(msg.id)} className="px-3 py-1 text-xs font-medium bg-[#1a73e8] text-white rounded hover:bg-[#155db1]">Lưu & Chạy</button>
                                 </div>
-                            )}
-                        </>
-                    )}
-                  </div>
+                            </div>
+                        ) : (
+                            <>
+                                {msg.attachments && msg.attachments.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                    {msg.attachments.map((att, idx) => renderAttachment(att, idx, false))}
+                                </div>
+                                )}
+                                
+                                {/* Thinking Block */}
+                                {msg.thought && (
+                                    <div className="mb-2">
+                                        <button 
+                                            onClick={() => toggleThoughts(msg.id)}
+                                            className="flex items-center gap-1 text-xs font-mono text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#1a73e8] dark:hover:text-[#8ab4f8]"
+                                        >
+                                            <span className="material-symbols-outlined text-[14px]">psychology</span>
+                                            {expandedThoughts.has(msg.id) ? 'Ẩn suy nghĩ' : 'Xem quá trình suy luận'}
+                                            <span className="material-symbols-outlined text-[14px]">{expandedThoughts.has(msg.id) ? 'expand_less' : 'expand_more'}</span>
+                                        </button>
+                                        {expandedThoughts.has(msg.id) && (
+                                            <div className="mt-1 p-3 bg-[#f8f9fa] dark:bg-[#1e1f20] border-l-2 border-[#dadce0] dark:border-[#5e5e5e] text-xs font-mono text-[#5f6368] dark:text-[#c4c7c5] whitespace-pre-wrap">
+                                                {msg.thought}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {msg.text === '' && !msg.isError ? (
+                                    <div className="h-6 w-24 bg-[#f1f3f4] dark:bg-[#2d2e30] rounded shimmer"></div>
+                                ) : msg.isError ? (
+                                    <div className="flex flex-col gap-2 items-start">
+                                        <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-300 text-sm">
+                                            <span className="flex items-center gap-2 font-medium">
+                                                <span className="material-symbols-outlined">error</span>
+                                                Tạo nội dung thất bại
+                                            </span>
+                                            <p className="mt-1 opacity-90">{msg.text.replace('System Error: ', '')}</p>
+                                        </div>
+                                        <button onClick={() => handleRetry(msg.id)} className="flex items-center gap-1 text-xs text-[#1a73e8] dark:text-[#8ab4f8] hover:underline">
+                                            <span className="material-symbols-outlined text-sm">refresh</span>
+                                            Thử lại
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <MarkdownView 
+                                        content={msg.text} 
+                                        className={msg.role === Role.MODEL ? 'font-serif' : ''} 
+                                        style={contentFontStyle}
+                                        activeStyle={appConfig.writingStyle ? 'custom' : 'default'}
+                                    />
+                                )}
+
+                                {/* Grounding Sources */}
+                                {msg.groundingMetadata && msg.groundingMetadata.groundingChunks && msg.groundingMetadata.groundingChunks.length > 0 && (
+                                    <div className="mt-3 pt-2 border-t border-[#f1f3f4] dark:border-[#444746]">
+                                        <p className="text-[11px] font-medium text-[#5f6368] dark:text-[#9aa0a6] uppercase mb-1 flex items-center gap-1">
+                                            <span className="material-symbols-outlined text-[14px]">public</span>
+                                            Nguồn tham khảo (Google Search)
+                                        </p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {msg.groundingMetadata.groundingChunks.map((chunk, i) => {
+                                                if (chunk.web) {
+                                                    return (
+                                                        <a key={i} href={chunk.web.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 bg-[#f1f3f4] dark:bg-[#2d2e30] hover:bg-[#e3e3e3] dark:hover:bg-[#3c4043] px-2 py-1 rounded text-xs text-[#1a73e8] dark:text-[#8ab4f8] border border-[#dadce0] dark:border-[#5e5e5e] transition-colors max-w-[200px] truncate">
+                                                            <span className="material-symbols-outlined text-[12px]">link</span>
+                                                            <span className="truncate">{chunk.web.title || chunk.web.uri}</span>
+                                                        </a>
+                                                    );
+                                                }
+                                                return null;
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                    </div>
+                ))}
+                <div ref={messagesEndRef} />
                 </div>
-              ))}
-              <div ref={messagesEndRef} />
+            )}
             </div>
-          )}
         </div>
 
         <div className={`absolute bottom-0 left-0 right-0 bg-white dark:bg-[#131314] p-2 md:p-4 z-20 ${focusMode ? 'md:px-40' : 'md:px-16'}`}>

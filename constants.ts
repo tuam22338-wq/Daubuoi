@@ -29,13 +29,13 @@ export const AVAILABLE_MODELS: ModelConfig[] = [
   },
   {
     id: 'gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro',
+    name: 'Gemini 2.5 Pro (Yêu cầu trả phí)',
     description: 'Cân bằng hiệu suất và chi phí',
     isThinking: true
   },
   {
     id: 'gemini-3-pro-preview',
-    name: 'Gemini 3.0 Pro',
+    name: 'Gemini 3.0 Pro (Yêu cầu trả phí)',
     description: 'Tốt nhất cho sáng tạo, ngữ cảnh 2M',
     isThinking: true
   }
@@ -67,10 +67,35 @@ The analysis should be concise and analytical.
 After the </thought> tag, provide your final response as normal.
 `;
 
+export const STYLE_ANALYSIS_PROMPT = `Analyze the following writing sample. Extract the "Writing DNA" into a concise style guide.
+Focus on:
+1. Sentence Structure (Length, complexity, rhythm).
+2. Tone & Atmosphere (Dark, humorous, clinical, lyrical?).
+3. Vocabulary Choice (Simple, archaic, technical, flowery?).
+4. POV & Narrative Distance (Deep POV, Omniscient, Detached?).
+5. Dialogue Style.
+
+Output ONLY the style analysis as a set of rules. Do not output anything else.`;
+
 export const MEMORY_EXTRACTION_PROMPT = `Analyze the recent conversation provided below.
 Extract key facts, significant plot events, character developments, or world-building details.
 Output ONLY the facts as a bulleted list.
 If there are no new important facts, return "NO_UPDATE".`;
+
+export const CHARACTER_EXTRACTION_PROMPT = `Analyze the conversation text below to identify characters and their current states.
+For each major character mentioned, extract:
+1. Name
+2. Brief description/traits (visuals, personality)
+3. Current Status (Location, emotional state, or key relationship update)
+
+Format the output strictly as follows for each character (one per line):
+Name | Description | Current Status
+
+Example:
+John Doe | Tall, scar on left eye, grumpy | Angry at Jane, currently in the tavern
+Jane Smith | Healer, wears white | Trying to heal John, exhausted
+
+If no character updates are found, return "NO_UPDATE".`;
 
 export const DEFAULT_GENERATION_CONFIG = {
   temperature: 1,
@@ -78,24 +103,29 @@ export const DEFAULT_GENERATION_CONFIG = {
   topK: 40,
   maxOutputTokens: 8192, // Max for most models to allow 3000+ words
   stopSequences: [],
-  thinkingBudget: 0,
+  thinkingBudget: 1024, // Default budget for thinking models
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   apiKeys: [], // Initialize empty
-  model: AVAILABLE_MODELS[3].id, // Default to Gemini 3.0 Pro
+  model: AVAILABLE_MODELS[0].id, // Default to Gemini 2.5 Flash
   systemInstruction: NOVELIST_SYSTEM_INSTRUCTION,
   generationConfig: DEFAULT_GENERATION_CONFIG,
   safetyThreshold: SafetyThreshold.BLOCK_NONE, // Writers often need fewer restrictions
   enableGoogleSearch: false,
   knowledgeFiles: [],
   memories: [],
+  characterProfiles: [], // Initialize empty
   writerMode: WriterMode.DRAFTING,
   targetWordCount: 3000,
   uiScale: 1.0, // Default 100% zoom
   fontSize: 15, // Default font size
   ttsVoice: 'Kore', // Default Gemini Voice
-  ttsRate: 1.0 // Default speed
+  ttsRate: 1.0, // Default speed
+  writingStyle: "", // Default empty style
+  enableThinking: true, // Enable thinking by default for supported models
+  enableLogicAnalysis: false,
+  ttsProvider: 'gemini'
 };
 
 export const SAFETY_SETTINGS_OPTIONS = [

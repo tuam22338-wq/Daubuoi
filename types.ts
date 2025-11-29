@@ -34,6 +34,14 @@ export interface MemoryItem {
   type: 'auto' | 'manual';
 }
 
+export interface CharacterProfile {
+  id: string;
+  name: string;
+  description: string; // Appearance, traits
+  currentStatus: string; // Current location, emotion, or relationship status
+  updatedAt: number;
+}
+
 export interface GroundingChunk {
   web?: {
     uri: string;
@@ -62,6 +70,7 @@ export interface ChatSession {
     messages: ChatMessage[];
     updatedAt: number;
     totalTokens?: number; // Aggregate count
+    storySummary?: string; // The "Story So Far" context
 }
 
 export interface ModelConfig {
@@ -104,10 +113,19 @@ export interface AppConfig {
   enableGoogleSearch: boolean;
   knowledgeFiles: KnowledgeFile[];
   memories: MemoryItem[]; // Active Long-term memory
+  characterProfiles: CharacterProfile[]; // Active Character tracking
   writerMode: WriterMode;
   targetWordCount: number; // Force specific length
   uiScale: number; // UI Zoom level (0.8 - 1.5)
   fontSize: number; // Font size in px (12-20)
-  ttsVoice: string; // Voice URI
+  ttsVoice: string; // Voice URI or Name
   ttsRate: number; // Speaking rate 0.5 - 2.0
+  writingStyle: string; // Analyzed style DNA
+  
+  // Thinking Features
+  enableThinking: boolean;
+  enableLogicAnalysis: boolean; // Simulated thinking prompt
+
+  // TTS Provider
+  ttsProvider: 'gemini' | 'browser';
 }

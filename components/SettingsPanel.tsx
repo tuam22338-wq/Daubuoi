@@ -35,13 +35,29 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
   const [interfaceOpen, setInterfaceOpen] = useState(true);
   const [ttsOpen, setTtsOpen] = useState(false);
+  const [styleOpen, setStyleOpen] = useState(true);
+  const [thinkingOpen, setThinkingOpen] = useState(true);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
   const [newStopSequence, setNewStopSequence] = useState('');
+  const [sampleText, setSampleText] = useState('');
+  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
   const knowledgeInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    const loadVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        setBrowserVoices(voices);
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, []);
+
   if (isCollapsed) return null;
+
+  const currentModelDef = AVAILABLE_MODELS.find(m => m.id === config.model);
+  const supportsThinking = currentModelDef?.isThinking;
 
   const handleChange = (field: keyof AppConfig, value: any) => {
     setConfig(prev => ({ ...prev, [field]: value }));
@@ -80,6 +96,26 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       const text = e.target.value;
       const keys = text.split('\n').map(k => k.trim()).filter(k => k.length > 0);
       handleChange('apiKeys', keys);
+  };
+
+  const handleStyleAnalysis = async () => {
+      if (!sampleText.trim()) return;
+      if (config.apiKeys.length === 0) {
+          alert("Vui lòng nhập API Key để phân tích.");
+          return;
+      }
+      setIsProcessing(true);
+      setProcessingStatus("Đang phân tích văn phong...");
+      try {
+          const styleDNA = await geminiService.analyzeWritingStyle(sampleText);
+          handleChange('writingStyle', styleDNA);
+          setSampleText('');
+      } catch (e) {
+          alert("Lỗi phân tích.");
+      } finally {
+          setIsProcessing(false);
+          setProcessingStatus('');
+      }
   };
 
   const extractTextFromPdf = async (file: File): Promise<string> => {
@@ -237,6 +273,113 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         </div>
       </div>
 
+       {/* Thinking Settings */}
+       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746] bg-yellow-50 dark:bg-[#332b00]/30">
+            <div 
+                className="flex justify-between items-center cursor-pointer py-1"
+                onClick={() => setThinkingOpen(!thinkingOpen)}
+            >
+                <h3 className="font-medium text-yellow-800 dark:text-yellow-200">Suy luận (Thinking)</h3>
+                <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${thinkingOpen ? 'rotate-180' : ''}`}>expand_more</span>
+            </div>
+            {thinkingOpen && (
+                <div className="mt-4 space-y-4">
+                     {/* Enable Thinking */}
+                    {supportsThinking && (
+                        <div className="flex items-center justify-between">
+                            <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Bật/tắt chế độ suy luận native">Kích hoạt Thinking</span>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                    type="checkbox" 
+                                    checked={config.enableThinking !== false} 
+                                    onChange={(e) => handleChange('enableThinking', e.target.checked)}
+                                    className="sr-only peer" 
+                                />
+                                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:bg-yellow-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                            </label>
+                        </div>
+                    )}
+
+                    {/* Logic Analysis Toggle */}
+                    <div className="flex items-center justify-between">
+                         <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Yêu cầu AI tự phân tích logic trước khi trả lời (Simulated)">Nội suy Logic (Simulated)</span>
+                         <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={config.enableLogicAnalysis} 
+                                onChange={(e) => handleChange('enableLogicAnalysis', e.target.checked)}
+                                className="sr-only peer" 
+                            />
+                            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:bg-yellow-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                         </label>
+                    </div>
+
+                    {/* Thinking Budget */}
+                    {supportsThinking && config.enableThinking !== false && (
+                        <div>
+                            <div className="flex justify-between mb-1">
+                                <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Ngân sách token cho suy luận">Thinking Budget</span>
+                                <span className="text-[#3c4043] dark:text-[#e3e3e3]">{config.generationConfig.thinkingBudget || 1024}</span>
+                            </div>
+                            <input
+                                type="range" min="1024" max="32768" step="1024"
+                                value={config.generationConfig.thinkingBudget || 1024}
+                                onChange={(e) => handleGenConfigChange('thinkingBudget', parseInt(e.target.value))}
+                                className="w-full h-1 bg-[#dadce0] dark:bg-[#444746] rounded-lg appearance-none cursor-pointer accent-yellow-600"
+                            />
+                        </div>
+                    )}
+                </div>
+            )}
+       </div>
+
+       {/* Style Training */}
+       <div className="p-4 border-b border-[#dadce0] dark:border-[#444746] bg-purple-50 dark:bg-[#2d2036]/30">
+           <div 
+                className="flex justify-between items-center cursor-pointer py-1"
+                onClick={() => setStyleOpen(!styleOpen)}
+            >
+                <h3 className="font-medium text-purple-800 dark:text-purple-300">Huấn luyện Văn phong (Style)</h3>
+                <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${styleOpen ? 'rotate-180' : ''}`}>expand_more</span>
+            </div>
+            {styleOpen && (
+                <div className="mt-2 space-y-2">
+                    <p className="text-[10px] text-[#5f6368] dark:text-[#9aa0a6]">
+                        Dán một đoạn văn mẫu của bạn vào đây. AI sẽ phân tích và bắt chước giọng văn đó.
+                    </p>
+                    <textarea 
+                        value={config.writingStyle || sampleText}
+                        onChange={(e) => {
+                            if (config.writingStyle) {
+                                handleChange('writingStyle', e.target.value);
+                            } else {
+                                setSampleText(e.target.value);
+                            }
+                        }}
+                        placeholder={config.writingStyle ? "DNA văn phong đang được áp dụng..." : "Dán đoạn văn mẫu vào đây..."}
+                        className="w-full bg-white dark:bg-[#2d2e30] border border-[#dadce0] dark:border-[#5e5e5e] rounded p-2 text-xs h-20"
+                    />
+                    {!config.writingStyle && (
+                        <button 
+                            onClick={handleStyleAnalysis}
+                            disabled={isProcessing}
+                            className="w-full py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs"
+                        >
+                            {isProcessing ? processingStatus : 'Phân tích & Học'}
+                        </button>
+                    )}
+                    {config.writingStyle && (
+                        <button 
+                             onClick={() => handleChange('writingStyle', '')}
+                             className="text-xs text-red-500 hover:underline"
+                        >
+                            Xóa văn phong (Reset)
+                        </button>
+                    )}
+                </div>
+            )}
+       </div>
+
        {/* Interface / Appearance Settings */}
        <div className="p-4 border-b border-[#dadce0] dark:border-[#444746]">
             <div 
@@ -284,24 +427,46 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 className="flex justify-between items-center cursor-pointer py-1"
                 onClick={() => setTtsOpen(!ttsOpen)}
             >
-                <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Gemini Text-to-Speech</h3>
+                <h3 className="font-medium text-[#3c4043] dark:text-[#c4c7c5]">Text-to-Speech</h3>
                 <span className={`material-symbols-outlined text-[#5f6368] dark:text-[#c4c7c5] text-lg transform transition-transform ${ttsOpen ? 'rotate-180' : ''}`}>expand_more</span>
             </div>
             {ttsOpen && (
                 <div className="mt-4 space-y-4">
                     <div>
+                        <label className="block text-[#5f6368] dark:text-[#c4c7c5] mb-1">Nguồn (Provider)</label>
+                        <select
+                            value={config.ttsProvider || 'gemini'}
+                            onChange={(e) => handleChange('ttsProvider', e.target.value)}
+                            className="w-full bg-[#f1f3f4] dark:bg-[#2d2e30] border-none text-[#3c4043] dark:text-[#e3e3e3] py-1.5 px-3 rounded text-xs focus:ring-0 cursor-pointer mb-2"
+                        >
+                            <option value="gemini">Gemini API (Chuẩn, Tự nhiên)</option>
+                            <option value="browser">Trình duyệt (Miễn phí, Nhanh)</option>
+                        </select>
+                    </div>
+
+                    <div>
                         <label className="block text-[#5f6368] dark:text-[#c4c7c5] mb-1">Giọng nói (Voice)</label>
                         <div className="relative">
                             <select
-                                value={config.ttsVoice || 'Kore'}
+                                value={config.ttsVoice || (config.ttsProvider === 'browser' ? '' : 'Kore')}
                                 onChange={(e) => handleChange('ttsVoice', e.target.value)}
                                 className="w-full bg-[#f1f3f4] dark:bg-[#2d2e30] border-none text-[#3c4043] dark:text-[#e3e3e3] py-1.5 px-3 pr-8 rounded text-xs focus:ring-0 cursor-pointer"
                             >
-                                {GEMINI_VOICES.map((voice) => (
-                                    <option key={voice.value} value={voice.value}>
-                                        {voice.name}
-                                    </option>
-                                ))}
+                                {config.ttsProvider === 'browser' ? (
+                                    browserVoices.length > 0 ? (
+                                        browserVoices.map((voice, idx) => (
+                                            <option key={`${voice.name}-${idx}`} value={voice.name}>
+                                                {voice.name} ({voice.lang})
+                                            </option>
+                                        ))
+                                    ) : <option value="">Đang tải giọng trình duyệt...</option>
+                                ) : (
+                                    GEMINI_VOICES.map((voice) => (
+                                        <option key={voice.value} value={voice.value}>
+                                            {voice.name}
+                                        </option>
+                                    ))
+                                )}
                             </select>
                              <span className="material-symbols-outlined absolute right-2 top-1.5 text-[#5f6368] dark:text-[#c4c7c5] pointer-events-none text-sm">arrow_drop_down</span>
                         </div>
