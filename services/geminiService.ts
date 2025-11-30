@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Chat, GenerateContentResponse, Content, Modality } from "@google/genai";
 import { AppConfig, KnowledgeFile, MemoryItem, VectorChunk, ChatMessage, ModelConfig, CharacterProfile, PlotBranch } from "../types";
-import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID, LOGIC_ANALYSIS_PROMPT, AVAILABLE_MODELS, STYLE_ANALYSIS_PROMPT, CHARACTER_EXTRACTION_PROMPT, CRITIC_PROMPT, BRANCHING_PROMPT } from "../constants";
+import { MEMORY_EXTRACTION_PROMPT, EMBEDDING_MODEL_ID, TTS_MODEL_ID, LOGIC_ANALYSIS_PROMPT, AVAILABLE_MODELS, STYLE_ANALYSIS_PROMPT, CHARACTER_EXTRACTION_PROMPT, CRITIC_PROMPT, BRANCHING_PROMPT, SENSORY_PROMPTS } from "../constants";
 
 // Declare process to avoid TypeScript errors during build
 declare const process: any;
@@ -567,6 +567,17 @@ Status: ${p.currentStatus}
         }
     }
 
+    // --- SENSORY ROULETTE LOGIC ---
+    if (this.currentConfig.enableSensoryRoulette) {
+        const randomSense = SENSORY_PROMPTS[Math.floor(Math.random() * SENSORY_PROMPTS.length)];
+        const senseInstruction = `\n\n[SENSORY INJECTION]\n${randomSense}`;
+        if (Array.isArray(messageInput)) {
+            messageInput.push({ text: senseInstruction });
+        } else {
+            messageInput += senseInstruction;
+        }
+    }
+
     let attempt = 0;
     const maxAttempts = Math.max(1, this.apiKeys.length);
 
@@ -587,7 +598,7 @@ Status: ${p.currentStatus}
             if (isAutoRefine) {
                 // Step 1: Generate Draft (using sendMessage to wait for full response)
                 const draftResponse = await this.chatSession.sendMessage({ message: messageInput });
-                const draftText = draftResponse.response.text; 
+                const draftText = draftResponse.text || ""; // FIXED: Use .text accessor directly
 
                 // Step 2: Critic & Refine
                 // We send a NEW message to the SAME session to refine the previous output

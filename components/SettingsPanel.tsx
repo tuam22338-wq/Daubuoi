@@ -362,6 +362,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                          </label>
                     </div>
 
+                    {/* Sensory Roulette */}
+                    <div className="flex items-center justify-between">
+                         <div className="flex flex-col">
+                            <span className="text-[#5f6368] dark:text-[#c4c7c5]" title="Ngẫu nhiên yêu cầu AI tập trung vào một giác quan">Sensory Roulette</span>
+                            <span className="text-[10px] text-gray-500">Tăng độ sống động (Ngẫu nhiên)</span>
+                         </div>
+                         <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={config.enableSensoryRoulette} 
+                                onChange={(e) => handleChange('enableSensoryRoulette', e.target.checked)}
+                                className="sr-only peer" 
+                            />
+                            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:bg-green-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                         </label>
+                    </div>
+
                     {/* Banned Words */}
                     <div>
                          <label className="block text-[#5f6368] dark:text-[#c4c7c5] mb-1">Từ cấm (Negative Constraints)</label>

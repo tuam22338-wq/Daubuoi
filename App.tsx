@@ -180,6 +180,29 @@ export default function App() {
     }
   };
 
+  // --- Export Logic ---
+  const handleExport = () => {
+    if (messages.length === 0) return;
+    
+    let content = `# ${sessions.find(s => s.id === currentSessionId)?.title || 'Untitled Story'}\n\n`;
+    
+    messages.forEach(msg => {
+        if (msg.role === Role.MODEL && !msg.isError) {
+            content += `${msg.text}\n\n`;
+        }
+    });
+    
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${sessions.find(s => s.id === currentSessionId)?.title || 'story'}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   // --- PWA / Fullscreen Logic ---
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: any) => {
@@ -821,6 +844,15 @@ export default function App() {
                  {sessionTokenCount.toLocaleString()} tokens
              </div>
              
+             {/* Export Button */}
+             <button 
+                onClick={handleExport}
+                className="p-2 rounded-full hidden sm:block text-[#5f6368] dark:text-[#c4c7c5] hover:bg-[#f1f3f4] dark:hover:bg-[#2d2e30]"
+                title="Xuất bản Ebook (Export)"
+             >
+                 <span className="material-symbols-outlined">download</span>
+             </button>
+
              {/* Story Context Toggle */}
              <button 
                 onClick={() => setShowStoryContext(!showStoryContext)} 

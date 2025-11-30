@@ -5,9 +5,10 @@ interface MarkdownViewProps {
   content: string;
   className?: string;
   style?: React.CSSProperties;
+  activeStyle?: string; // Added to fix TS Error
 }
 
-const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '', style }) => {
+const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '', style, activeStyle }) => {
   // A very basic formatter to preserve whitespace and handle code blocks visually
   
   const formatText = (text: string) => {
@@ -43,9 +44,11 @@ const MarkdownView: React.FC<MarkdownViewProps> = ({ content, className = '', st
     });
   };
 
+  const activeStyleClass = activeStyle === 'custom' ? 'font-serif tracking-wide text-gray-800 dark:text-gray-200' : '';
+
   return (
     <div 
-        className={`markdown-body text-gray-800 dark:text-gray-300 leading-relaxed ${className}`}
+        className={`markdown-body text-gray-800 dark:text-gray-300 leading-relaxed ${className} ${activeStyleClass}`}
         style={style}
     >
       {formatText(content)}

@@ -97,6 +97,15 @@ Format the output strictly as JSON in the following format (do not use Markdown 
 
 export const DEFAULT_BANNED_WORDS = `shivered down his spine, released a breath he didn't know he was holding, emerald orbs, cerulean eyes, piercing gaze, smirked, chuckled darkly, testament to, a mixture of`;
 
+export const SENSORY_PROMPTS = [
+    "Focus intensely on OLFACTORY (Smell) details in this scene.",
+    "Focus intensely on TACTILE (Touch/Texture) details in this scene.",
+    "Focus intensely on AUDITORY (Sound) details in this scene.",
+    "Focus intensely on GUSTATORY (Taste) details in this scene.",
+    "Focus intensely on VISUAL (Light/Shadow/Color) details in this scene.",
+    "Focus intensely on INTERNAL BODILY SENSATIONS (Heartbeat, adrenaline, pain) in this scene."
+];
+
 export const STYLE_ANALYSIS_PROMPT = `Analyze the following writing sample. Extract the "Writing DNA" into a concise style guide.
 Focus on:
 1. Sentence Structure (Length, complexity, rhythm).
@@ -157,7 +166,8 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   enableLogicAnalysis: false,
   ttsProvider: 'gemini',
   enableAutoRefine: false, // Default off
-  bannedWords: DEFAULT_BANNED_WORDS
+  bannedWords: DEFAULT_BANNED_WORDS,
+  enableSensoryRoulette: false
 };
 
 export const SAFETY_SETTINGS_OPTIONS = [

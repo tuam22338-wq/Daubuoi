@@ -138,4 +138,5 @@ export interface AppConfig {
   // Quality Control
   enableAutoRefine: boolean; // Critic Loop
   bannedWords: string; // Negative constraints
+  enableSensoryRoulette: boolean; // Random sensory injection
 }
